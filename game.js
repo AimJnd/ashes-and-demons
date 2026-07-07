@@ -42,35 +42,99 @@ const Camera = {
   toScreen(wx, wy) { return { x: wx - this.x, y: wy - this.y }; },
 };
 
-// Arena: floor, grid, and boundary walls -----------------------------
+// Arena: gothic stone floor, rune circles, ornate boundary ------------
 const Arena = {
-  GRID: 80,
+  TILE: 160, // big flagstones
+
+  // Faint ceremonial circles baked into the floor (world coords).
+  RUNES: [
+    { x: 2560 / 2, y: 1440 / 2, r: 260 },
+    { x: 560,  y: 380,  r: 170 },
+    { x: 2010, y: 1080, r: 190 },
+  ],
+
   render(ctx, camera) {
-    // Floor
     const o = camera.toScreen(0, 0);
-    ctx.fillStyle = '#101018';
+
+    // Floor base
+    ctx.fillStyle = '#0d0c12';
     ctx.fillRect(o.x, o.y, CONFIG.worldWidth, CONFIG.worldHeight);
 
-    // Grid lines — only draw the ones in view for cheapness.
-    ctx.strokeStyle = 'rgba(138, 43, 226, 0.12)';
+    // Flagstones: deterministic per-tile tone variation (hash on indices)
+    // so the floor has texture without any image assets.
+    const T = this.TILE;
+    const ix0 = Math.floor(camera.x / T), iy0 = Math.floor(camera.y / T);
+    const ix1 = Math.ceil((camera.x + camera.w) / T);
+    const iy1 = Math.ceil((camera.y + camera.h) / T);
+    for (let ix = ix0; ix <= ix1; ix++) {
+      for (let iy = iy0; iy <= iy1; iy++) {
+        const h = ((ix * 73856093) ^ (iy * 19349663)) >>> 0;
+        const m = h % 9;
+        if (m === 0)      ctx.fillStyle = 'rgba(255, 255, 255, 0.018)';
+        else if (m === 1) ctx.fillStyle = 'rgba(138, 43, 226, 0.028)';
+        else if (m === 2) ctx.fillStyle = 'rgba(0, 0, 0, 0.16)';
+        else continue;
+        ctx.fillRect(ix * T - camera.x, iy * T - camera.y, T, T);
+      }
+    }
+
+    // Grout lines between flagstones (dark, not neon)
+    ctx.strokeStyle = 'rgba(0, 0, 0, 0.4)';
     ctx.lineWidth = 1;
     ctx.beginPath();
-    const startX = Math.floor(camera.x / this.GRID) * this.GRID;
-    const startY = Math.floor(camera.y / this.GRID) * this.GRID;
-    for (let x = startX; x <= camera.x + camera.w; x += this.GRID) {
+    for (let x = ix0 * T; x <= camera.x + camera.w; x += T) {
       const sx = x - camera.x;
       ctx.moveTo(sx, 0); ctx.lineTo(sx, camera.h);
     }
-    for (let y = startY; y <= camera.y + camera.h; y += this.GRID) {
+    for (let y = iy0 * T; y <= camera.y + camera.h; y += T) {
       const sy = y - camera.y;
       ctx.moveTo(0, sy); ctx.lineTo(camera.w, sy);
     }
     ctx.stroke();
 
-    // Boundary walls
-    ctx.strokeStyle = '#8a2be2';
-    ctx.lineWidth = 4;
+    // Ceremonial rune circles — double ring + tick marks, very faint.
+    ctx.strokeStyle = 'rgba(138, 43, 226, 0.09)';
+    for (const c of this.RUNES) {
+      const s = camera.toScreen(c.x, c.y);
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, c.r, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, c.r * 0.78, 0, Math.PI * 2);
+      ctx.stroke();
+      // 8 radial ticks between the rings
+      ctx.beginPath();
+      for (let i = 0; i < 8; i++) {
+        const a = (i / 8) * Math.PI * 2;
+        ctx.moveTo(s.x + Math.cos(a) * c.r * 0.78, s.y + Math.sin(a) * c.r * 0.78);
+        ctx.lineTo(s.x + Math.cos(a) * c.r,        s.y + Math.sin(a) * c.r);
+      }
+      ctx.stroke();
+    }
+
+    // Boundary: heavy dark wall with a thin violet inlay + corner sigils.
+    ctx.strokeStyle = '#231b30';
+    ctx.lineWidth = 10;
     ctx.strokeRect(o.x, o.y, CONFIG.worldWidth, CONFIG.worldHeight);
+    ctx.strokeStyle = 'rgba(138, 43, 226, 0.55)';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(o.x + 6, o.y + 6, CONFIG.worldWidth - 12, CONFIG.worldHeight - 12);
+    ctx.fillStyle = 'rgba(138, 43, 226, 0.7)';
+    for (const [cx, cy] of [
+      [0, 0], [CONFIG.worldWidth, 0],
+      [0, CONFIG.worldHeight], [CONFIG.worldWidth, CONFIG.worldHeight],
+    ]) {
+      const s = camera.toScreen(cx, cy);
+      ctx.beginPath();
+      ctx.moveTo(s.x, s.y - 12);
+      ctx.lineTo(s.x + 12, s.y);
+      ctx.lineTo(s.x, s.y + 12);
+      ctx.lineTo(s.x - 12, s.y);
+      ctx.closePath();
+      ctx.fill();
+    }
   },
 };
 
@@ -170,6 +234,31 @@ class Game {
 
     // Damage numbers sit above everything in the world.
     for (const f of this.world.floaters) f.render(ctx, Camera);
+
+    // Screen-space vignette: darkened corners focus the eye on the player
+    // and sell the gothic mood. Uses a multiply gradient with fully opaque
+    // stops (transparent stops render inconsistently across canvas
+    // implementations). Cached per canvas size.
+    if (!this._vignette || this._vignetteKey !== `${canvas.width}x${canvas.height}`) {
+      // r0 = 0 with a doubled white stop: same look, but avoids the
+      // inner-radius rendering bug some canvas implementations have.
+      const g = ctx.createRadialGradient(
+        canvas.width / 2, canvas.height / 2, 0,
+        canvas.width / 2, canvas.height / 2, Math.hypot(canvas.width, canvas.height) * 0.6
+      );
+      const plateau = (Math.min(canvas.width, canvas.height) * 0.45) /
+                      (Math.hypot(canvas.width, canvas.height) * 0.6);
+      g.addColorStop(0, '#ffffff');        // multiply by white = unchanged
+      g.addColorStop(plateau, '#ffffff');  // flat center plateau
+      g.addColorStop(1, '#6f6a80');        // corners darken toward violet-grey
+      this._vignette = g;
+      this._vignetteKey = `${canvas.width}x${canvas.height}`;
+    }
+    ctx.save();
+    ctx.globalCompositeOperation = 'multiply';
+    ctx.fillStyle = this._vignette;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.restore();
 
     Hud.render(this.world);
   }

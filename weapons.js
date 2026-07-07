@@ -140,33 +140,39 @@ export class SlashVFX {
     if (this.life <= 0) this.alive = false;
   }
 
+  // Blade streak: a crisp arc that sweeps across the cone with a fading
+  // trail behind the leading edge — reads as a slash, not a filled slice.
   render(ctx, camera) {
     if (this.delay > 0) return;
     const s = camera.toScreen(this.x, this.y);
     const t = 1 - this.life / SLASH_LIFE; // 0 -> 1 over lifetime
-    // Sweep: leading edge travels across the cone; trail fades behind it.
     const from = this.angle - this.arc / 2;
-    const lead = from + this.arc * Math.min(1, t * 1.6);
+    const lead = from + this.arc * Math.min(1, t * 1.75);
+    const fade = 1 - t;
 
     ctx.save();
-    ctx.globalAlpha = 0.55 * (1 - t);
-    const grad = ctx.createRadialGradient(s.x, s.y, this.range * 0.25, s.x, s.y, this.range);
-    grad.addColorStop(0, 'rgba(159, 245, 255, 0)');
-    grad.addColorStop(1, SLASH_COLOR);
-    ctx.fillStyle = grad;
-    ctx.beginPath();
-    ctx.moveTo(s.x, s.y);
-    ctx.arc(s.x, s.y, this.range, from, lead);
-    ctx.closePath();
-    ctx.fill();
-
-    // Bright leading edge line for a "blade" feel.
-    ctx.globalAlpha = 0.9 * (1 - t);
+    ctx.lineCap = 'round';
+    // Trailing streak: stacked arcs, widest/faintest at the back, with a
+    // bright hot core — reads as one motion-blurred blade sweep.
+    const R = this.range * 0.82;
+    for (const [w, back, a, col] of [
+      [12, 0.36, 0.12, SLASH_COLOR],
+      [7,  0.22, 0.30, SLASH_COLOR],
+      [3.5, 0.11, 0.70, '#e6fbff'],
+    ]) {
+      ctx.globalAlpha = a * fade;
+      ctx.strokeStyle = col;
+      ctx.lineWidth = w;
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, R, Math.max(from, lead - this.arc * back), lead);
+      ctx.stroke();
+    }
+    // White-hot cap right at the leading edge.
+    ctx.globalAlpha = 0.9 * fade;
     ctx.strokeStyle = '#ffffff';
-    ctx.lineWidth = 2.5;
+    ctx.lineWidth = 3;
     ctx.beginPath();
-    ctx.moveTo(s.x + Math.cos(lead) * this.range * 0.3, s.y + Math.sin(lead) * this.range * 0.3);
-    ctx.lineTo(s.x + Math.cos(lead) * this.range, s.y + Math.sin(lead) * this.range);
+    ctx.arc(s.x, s.y, R, lead - 0.06, lead + 0.02);
     ctx.stroke();
     ctx.restore();
   }
@@ -222,22 +228,21 @@ export class NovaVFX {
     const r = this.radius * ease;
 
     ctx.save();
-    // Expanding ring
-    ctx.globalAlpha = 0.85 * (1 - t);
+    // Main expanding ring with echo rings trailing behind it. (No radial
+    // gradients — transparent stops render inconsistently across canvases.)
     ctx.strokeStyle = `rgba(${NOVA_COLOR}, 1)`;
+    ctx.globalAlpha = 0.85 * (1 - t);
     ctx.lineWidth = 6 * (1 - t) + 2;
     ctx.beginPath();
     ctx.arc(s.x, s.y, r, 0, Math.PI * 2);
     ctx.stroke();
-    // Soft inner glow that lags the ring
-    ctx.globalAlpha = 0.25 * (1 - t);
-    const grad = ctx.createRadialGradient(s.x, s.y, r * 0.4, s.x, s.y, r);
-    grad.addColorStop(0, `rgba(${NOVA_COLOR}, 0)`);
-    grad.addColorStop(1, `rgba(${NOVA_COLOR}, 1)`);
-    ctx.fillStyle = grad;
-    ctx.beginPath();
-    ctx.arc(s.x, s.y, r, 0, Math.PI * 2);
-    ctx.fill();
+    for (const [lag, a] of [[0.82, 0.30], [0.62, 0.14]]) {
+      ctx.globalAlpha = a * (1 - t);
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, r * lag, 0, Math.PI * 2);
+      ctx.stroke();
+    }
     ctx.restore();
   }
 }
