@@ -222,6 +222,52 @@ html, body {
 #levelup-cards .card h3 { margin-bottom: 0.5rem; color: var(--accent); }
 #levelup-cards .card p { font-size: 0.9rem; opacity: 0.85; }
 
+/* Tiered upgrade cards ----------------------------------------------- */
+/* Shared pill tag ("RARE" / "EPIC") */
+#levelup-cards .tier-tag {
+  display: inline-block;
+  margin-bottom: 0.4rem;
+  padding: 0.1rem 0.5rem;
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  color: #16161f;
+  border-radius: 999px;
+}
+
+/* Rare (e.g. Spirit Blade, Twin Shot) — golden, glowing */
+#levelup-cards .card.rare {
+  border-color: #ffd166;
+  background: linear-gradient(160deg, #211a08, #16161f 70%);
+  animation: rare-pulse 1.6s ease-in-out infinite;
+}
+#levelup-cards .card.rare:hover {
+  background: linear-gradient(160deg, #2c2208, #20203a 70%);
+}
+#levelup-cards .card.rare h3 { color: #ffd166; }
+#levelup-cards .card.rare .tier-tag { background: #ffd166; }
+@keyframes rare-pulse {
+  0%, 100% { box-shadow: 0 0 12px rgba(255, 209, 102, 0.25); }
+  50%      { box-shadow: 0 0 24px rgba(255, 209, 102, 0.55); }
+}
+
+/* Epic (Chrono Field, Holy Nova) — violet, stronger glow, faster pulse */
+#levelup-cards .card.epic {
+  border-color: #d16bff;
+  background: linear-gradient(160deg, #1d0a26, #16161f 70%);
+  animation: epic-pulse 1.1s ease-in-out infinite;
+}
+#levelup-cards .card.epic:hover {
+  background: linear-gradient(160deg, #2a0e38, #20203a 70%);
+  transform: translateY(-4px) scale(1.03);
+}
+#levelup-cards .card.epic h3 { color: #d16bff; }
+#levelup-cards .card.epic .tier-tag { background: #d16bff; }
+@keyframes epic-pulse {
+  0%, 100% { box-shadow: 0 0 16px rgba(209, 107, 255, 0.35); }
+  50%      { box-shadow: 0 0 32px rgba(209, 107, 255, 0.7); }
+}
+
 /* Game over + leaderboard ------------------------------------------- */
 #screen-gameover h2 { color: var(--danger); font-size: 2.25rem; }
 

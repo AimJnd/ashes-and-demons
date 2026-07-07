@@ -63,8 +63,11 @@ export const LevelUp = {
 
     for (const up of choices) {
       const card = document.createElement('div');
-      card.className = 'card';
-      card.innerHTML = `<h3>${up.name}</h3><p>${up.desc}</p>`;
+      // Tiered card designs: 'rare' (gold) and 'epic' (violet) upgrades
+      // get their own look + a tier tag; commons stay plain.
+      card.className = up.tier ? `card ${up.tier}` : 'card';
+      const tag = up.tier ? `<span class="tier-tag">${up.tier.toUpperCase()}</span>` : '';
+      card.innerHTML = `${tag}<h3>${up.name}</h3><p>${up.desc}</p>`;
       card.addEventListener('click', () => {
         screen.classList.add('hidden');
         onPick(up.id);

@@ -4,7 +4,7 @@
   Each class extends Entity and implements update(dt, ...) + render(ctx, camera).
 */
 
-import { ENEMIES } from './config.js';
+import { CONFIG, ENEMIES } from './config.js';
 
 // Base ---------------------------------------------------------------
 export class Entity {
@@ -49,8 +49,16 @@ export class Enemy extends Entity {
     const dx = player.x - this.x;
     const dy = player.y - this.y;
     const d = Math.hypot(dx, dy) || 1;
-    this.x += (dx / d) * this.speed * dt;
-    this.y += (dy / d) * this.speed * dt;
+
+    // Chrono Field: enemies inside the player's aura move at a fraction of
+    // their speed. Computed per-frame — base speed is never mutated.
+    let speed = this.speed;
+    if (player.stats.chrono && d <= CONFIG.weapons.chrono.radius) {
+      speed *= CONFIG.weapons.chrono.slowMul;
+    }
+
+    this.x += (dx / d) * speed * dt;
+    this.y += (dy / d) * speed * dt;
     if (dx < 0) this.flip = true;
     else if (dx > 0) this.flip = false;
     if (this._hitFlash > 0) this._hitFlash -= dt;

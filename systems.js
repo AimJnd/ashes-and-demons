@@ -68,6 +68,44 @@ function hits(a, b) {
 }
 
 export const Combat = {
+  // Single entry point for hurting an enemy — flash, damage number, and
+  // death/drops all live here so every weapon (projectile, melee slash,
+  // future DoTs) produces identical feedback and loot.
+  damageEnemy(world, e, damage) {
+    if (!e.alive) return; // guard: never double-kill / double-drop
+    const player = world.player;
+    e.hp -= damage;
+    e.flash(); // subtle white tint so the struck enemy pops
+
+    // Damage number: spawn just above the enemy's body.
+    world.floaters.push(
+      new FloatingText(e.x, e.y - e.radius * 1.6, Math.round(damage))
+    );
+
+    // Vampiric Rites: heal a fraction of damage dealt (capped at the hit's
+    // real effect on the enemy so overkill doesn't over-heal).
+    if (player.stats.lifesteal) {
+      const dealt = Math.min(damage, Math.max(0, e.hp + damage));
+      player.health = Math.min(
+        player.stats.maxHealth,
+        player.health + dealt * player.stats.lifesteal
+      );
+    }
+
+    if (e.hp <= 0) {
+      e.alive = false;
+      world.kills += 1;
+      world.pickups.push(new Pickup(e.x, e.y, 'xp', e.xp));
+      // Random health drop — Lucky Charm adds to the base chance. Offset
+      // slightly so it isn't hidden under the gem.
+      if (Math.random() < CONFIG.drops.healthChance + (player.stats.luck || 0)) {
+        world.pickups.push(
+          new Pickup(e.x + 12, e.y, 'health', CONFIG.drops.healthValue)
+        );
+      }
+    }
+  },
+
   resolve(world) {
     const player = world.player;
 
@@ -78,26 +116,8 @@ export const Combat = {
         if (!e.alive || p._hit.has(e)) continue;
         if (!hits(p, e)) continue;
 
-        e.hp -= p.damage;
         p._hit.add(e);
-        e.flash(); // subtle white tint so the struck enemy pops
-
-        // Damage number: spawn just above the enemy's body.
-        world.floaters.push(
-          new FloatingText(e.x, e.y - e.radius * 1.6, Math.round(p.damage))
-        );
-
-        if (e.hp <= 0) {
-          e.alive = false;
-          world.kills += 1;
-          world.pickups.push(new Pickup(e.x, e.y, 'xp', e.xp));
-          // Random health drop — offset slightly so it isn't hidden under the gem.
-          if (Math.random() < CONFIG.drops.healthChance) {
-            world.pickups.push(
-              new Pickup(e.x + 12, e.y, 'health', CONFIG.drops.healthValue)
-            );
-          }
-        }
+        this.damageEnemy(world, e, p.damage);
 
         // Spend one pierce per enemy; despawn when exhausted.
         if (p.pierce > 0) { p.pierce -= 1; }
@@ -156,11 +176,19 @@ export const Progression = {
     return false;
   },
   // Pick N distinct random upgrade options for the modal.
-  rollChoices(count = 3) {
-    const pool = [...UPGRADES];
+  // Upgrades may declare:
+  //   weight:   relative roll chance (default 1; rare upgrades use < 1)
+  //   requires: fn(player) gate — hides options that don't apply
+  //             (e.g. Spirit Blade once owned, pierce after going melee)
+  rollChoices(count = 3, player) {
+    const pool = UPGRADES.filter((u) => !u.requires || !player || u.requires(player));
     const out = [];
     while (out.length < count && pool.length) {
-      const i = Math.floor(Math.random() * pool.length);
+      // Weighted pick without replacement.
+      const total = pool.reduce((sum, u) => sum + (u.weight ?? 1), 0);
+      let r = Math.random() * total;
+      let i = 0;
+      while (i < pool.length - 1 && (r -= pool[i].weight ?? 1) > 0) i++;
       out.push(pool.splice(i, 1)[0]);
     }
     return out;

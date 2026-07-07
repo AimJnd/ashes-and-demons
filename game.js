@@ -176,7 +176,7 @@ class Game {
 
   openLevelUp() {
     this.state = 'levelup';
-    LevelUp.open(Progression.rollChoices(3), (id) => {
+    LevelUp.open(Progression.rollChoices(3, this.world.player), (id) => {
       Progression.apply(this.world.player, id);
       this.state = 'playing';
     });

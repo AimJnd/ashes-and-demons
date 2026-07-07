@@ -8,12 +8,14 @@
     - XP accumulation + level state (progression.js decides WHEN to level;
       player just holds the numbers).
     - A mutable `stats` block seeded from CONFIG.player; upgrades mutate it.
-    - Auto-firing weapon (emits projectiles via a callback/queue).
+    - Holds ONE equipped weapon (weapons.js) and delegates attacking to it.
+      Starts ranged; the rare Spirit Blade upgrade swaps it for melee.
     - Pickup collection radius.
 */
 
 import { CONFIG } from './config.js';
-import { Entity, Projectile } from './entities.js';
+import { Entity } from './entities.js';
+import { RangedWeapon, createWeapon, NovaPassive } from './weapons.js';
 
 // Body radius used for drawing/collision (pickupRadius is much larger and
 // only governs gem attraction, so we keep a separate visual radius).
@@ -28,7 +30,8 @@ export class Player extends Entity {
     this.level = 1;
     this.xp = 0;
     this.xpToNext = 0;       // set by progression on init
-    this._fireCooldown = 0;
+    this.weapon = new RangedWeapon(); // game starts with the og shooting
+    this.nova = new NovaPassive();    // dormant until the Holy Nova upgrade
     this._hurtCd = 0;        // i-frame timer after taking contact damage
     this.facing = 0;         // radians, last movement direction
     this.flip = false;       // billboard faces left when true
@@ -62,33 +65,19 @@ export class Player extends Entity {
     // Tick down the post-hit invulnerability window.
     if (this._hurtCd > 0) this._hurtCd -= dt;
 
-    // Auto-fire at the nearest enemy on the fire-rate cadence.
-    this._fireCooldown -= dt;
-    if (this._fireCooldown <= 0) {
-      const target = this._nearestEnemy(world);
-      if (target) {
-        this._fireCooldown = 1 / this.stats.fireRate;
-        const ang = Math.atan2(target.y - this.y, target.x - this.x);
-        const sp = this.stats.projectileSpeed;
-        world.projectiles.push(new Projectile(
-          this.x, this.y,
-          Math.cos(ang) * sp, Math.sin(ang) * sp,
-          this.stats.damage, this.stats.pierce || 0
-        ));
-      }
-    }
+    // Attack: fully owned by the equipped weapon (weapons.js).
+    this.weapon.update(dt, this, world);
+    this.nova.update(dt, this, world); // epic passive (no-op until unlocked)
     // (leveling is owned by systems.js, not here)
   }
 
-  _nearestEnemy(world) {
-    let best = null;
-    let bestD = Infinity;
-    for (const e of world.enemies) {
-      if (!e.alive) continue;
-      const d = (e.x - this.x) ** 2 + (e.y - this.y) ** 2;
-      if (d < bestD) { bestD = d; best = e; }
-    }
-    return best;
+  // Swap the equipped weapon by id ('ranged' | 'melee'). Used by upgrades.
+  setWeapon(id) {
+    this.weapon = createWeapon(id);
+  }
+
+  hasWeapon(id) {
+    return this.weapon.id === id;
   }
 
   takeDamage(amount) {
@@ -112,6 +101,28 @@ export class Player extends Entity {
     const r = this.radius;
     const bodyH = r * 2.4;   // how tall the upright sprite stands
     const bodyW = r * 1.5;
+
+    // Chrono Field: translucent time-bubble on the floor, under everything.
+    if (this.stats.chrono) {
+      const cr = CONFIG.weapons.chrono.radius;
+      ctx.save();
+      const grad = ctx.createRadialGradient(s.x, s.y, cr * 0.35, s.x, s.y, cr);
+      grad.addColorStop(0, 'rgba(120, 200, 255, 0.03)');
+      grad.addColorStop(1, 'rgba(120, 200, 255, 0.12)');
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, cr, 0, Math.PI * 2);
+      ctx.fill();
+      // Slowly rotating dashed rim sells the "field" without being loud.
+      ctx.strokeStyle = 'rgba(120, 200, 255, 0.35)';
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([10, 14]);
+      ctx.lineDashOffset = (performance.now() / 40) % 24;
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, cr, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.restore();
+    }
 
     // Ground shadow (flattened ellipse at the feet)
     ctx.fillStyle = 'rgba(0, 0, 0, 0.35)';
