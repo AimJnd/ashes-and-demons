@@ -6,6 +6,7 @@
 
 import { CONFIG, ENEMIES, UPGRADES } from './config.js';
 import { Enemy, Projectile, Pickup, FloatingText } from './entities.js';
+import { Dragon } from './boss.js';
 
 // Spawner / difficulty director -------------------------------------
 export class Spawner {
@@ -13,13 +14,40 @@ export class Spawner {
     this.wave = 1;
     this.timer = 0;
     this._spawnAccumulator = 0;
+    this.bossSpawned = false;   // wave-25 dragon is on the field (or dead)
+    this._wyvernQueue = 0;      // escort still waiting to fly in
+    this._wyvernTimer = 0;
+  }
+
+  // True once the final wave has fully arrived — victory is then simply
+  // "no living enemies left" (checked by game.js after the cull).
+  get finalWaveArrived() {
+    return this.bossSpawned && this._wyvernQueue === 0;
   }
 
   update(dt, world) {
     this.timer += dt;
 
-    // Wave advances on a fixed interval; everything scales off wave number.
-    this.wave = 1 + Math.floor(this.timer / CONFIG.waves.waveInterval);
+    // Wave advances on a fixed interval, capped at the boss wave.
+    this.wave = Math.min(
+      CONFIG.waves.finalWave,
+      1 + Math.floor(this.timer / CONFIG.waves.waveInterval)
+    );
+
+    // FINAL WAVE: regular spawning stops. The dragon flies in with its
+    // wyvern escort trickling in behind it (staggered, from all bearings).
+    if (this.wave >= CONFIG.waves.finalWave) {
+      if (!this.bossSpawned) this._startBossWave(world);
+      if (this._wyvernQueue > 0) {
+        this._wyvernTimer -= dt;
+        while (this._wyvernTimer <= 0 && this._wyvernQueue > 0) {
+          this._wyvernQueue -= 1;
+          this._wyvernTimer += 0.35; // one every ~0.35s: a rolling swarm
+          this.spawnEnemy(world, 'wyvern');
+        }
+      }
+      return;
+    }
 
     // Spawn rate grows each wave; accumulate fractional spawns.
     const rate = CONFIG.waves.baseSpawnRate + (this.wave - 1) * CONFIG.waves.spawnRateGrowth;
@@ -30,7 +58,24 @@ export class Spawner {
     }
   }
 
-  spawnEnemy(world) {
+  _startBossWave(world) {
+    this.bossSpawned = true;
+    const player = world.player;
+
+    // The dragon flies in from well off-screen at a random bearing.
+    const ang = Math.random() * Math.PI * 2;
+    const boss = new Dragon(
+      player.x + Math.cos(ang) * 1200,
+      player.y + Math.sin(ang) * 1200
+    );
+    world.boss = boss;
+    world.enemies.push(boss);
+
+    this._wyvernQueue = CONFIG.waves.wyvernEscort;
+    this._wyvernTimer = 0.8; // a beat after the dragon appears
+  }
+
+  spawnEnemy(world, forcedType) {
     const player = world.player;
 
     // Spawn just outside the player's view, at a random bearing.
@@ -41,14 +86,17 @@ export class Spawner {
     x = Math.max(20, Math.min(CONFIG.worldWidth - 20, x));
     y = Math.max(20, Math.min(CONFIG.worldHeight - 20, y));
 
-    const e = new Enemy(x, y, this._pickType());
+    const e = new Enemy(x, y, forcedType ?? this._pickType());
 
     // Per-wave scaling on the instance (shared defs stay untouched).
-    const hpMul = 1 + (this.wave - 1) * CONFIG.waves.hpScaling;
-    const spMul = 1 + (this.wave - 1) * CONFIG.waves.speedScaling;
-    e.hp *= hpMul;
-    e.maxHp = e.hp;
-    e.speed *= spMul;
+    // Wyverns spawn at their config stats — the fight is tuned directly.
+    if (!forcedType) {
+      const hpMul = 1 + (this.wave - 1) * CONFIG.waves.hpScaling;
+      const spMul = 1 + (this.wave - 1) * CONFIG.waves.speedScaling;
+      e.hp *= hpMul;
+      e.maxHp = e.hp;
+      e.speed *= spMul;
+    }
 
     world.enemies.push(e);
   }
@@ -138,6 +186,24 @@ export const Combat = {
               Math.round(e.damage), { color: '#ff5555' })
           );
           break; // one hit per i-frame window
+        }
+      }
+    }
+
+    // Hostile projectiles (dragon fireballs) vs player ----------------
+    // Shares the same i-frame gate as contact damage so overlapping
+    // fireballs can't melt the player in a single frame.
+    for (const h of world.hazards) {
+      if (!h.alive) continue;
+      if (hits(h, player)) {
+        h.alive = false; // fireball bursts on impact either way
+        if (player._hurtCd <= 0) {
+          player.takeDamage(h.damage);
+          player._hurtCd = 0.5;
+          world.floaters.push(
+            new FloatingText(player.x, player.y - player.radius * 1.6,
+              Math.round(h.damage), { color: '#ff8c42' })
+          );
         }
       }
     }

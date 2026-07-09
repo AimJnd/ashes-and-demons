@@ -75,9 +75,10 @@ export class Enemy extends Entity {
     const t = performance.now() / 1000 + this._phase;
     let body;
     switch (this.type) {
-      case 'brute': body = this._renderBrute(ctx, s, t); break;
-      case 'swarm': body = this._renderSwarm(ctx, s, t); break;
-      default:      body = this._renderShade(ctx, s, t); break;
+      case 'brute':  body = this._renderBrute(ctx, s, t); break;
+      case 'swarm':  body = this._renderSwarm(ctx, s, t); break;
+      case 'wyvern': body = this._renderWyvern(ctx, s, t); break;
+      default:       body = this._renderShade(ctx, s, t); break;
     }
     if (this._hitFlash > 0 && body) {
       ctx.save();
@@ -345,6 +346,101 @@ export class Enemy extends Entity {
       ctx.closePath();
       ctx.fill();
     }
+    return body;
+  }
+
+  // Wyvern: the dragon's brood — a lesser dragon in the boss's ember
+  // palette. Horned head, bat wings, whip tail; flies with a fast bob.
+  _renderWyvern(ctx, s, t) {
+    const r = this.radius;
+    const dir = this.flip ? -1 : 1;
+    const bob = Math.sin(t * 7) * 3;
+    const cy = s.y - r * 2.0 + bob;
+    const flap = (Math.sin(t * 12) + 1) / 2;
+
+    this._shadow(ctx, s, r * 0.7, 0.2);
+
+    // Whip tail streaming behind (drawn first, behind everything)
+    ctx.save();
+    ctx.strokeStyle = '#241019';
+    ctx.lineWidth = r * 0.22;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(s.x - dir * r * 0.4, cy + r * 0.3);
+    ctx.quadraticCurveTo(
+      s.x - dir * r * 1.2, cy + r * 0.5 + Math.sin(t * 5) * 3,
+      s.x - dir * r * 1.8, cy + r * 0.15 + Math.sin(t * 4) * 4
+    );
+    ctx.stroke();
+    ctx.restore();
+
+    // Bat wings (scalloped membranes, pivot at the shoulders)
+    for (const d of [-1, 1]) {
+      const shx = s.x + d * r * 0.5, shy = cy - r * 0.2;
+      const tipx = shx + d * r * (1.5 + flap * 0.45);
+      const tipy = shy - r * (1.2 * flap + 0.15);
+      const wing = new Path2D();
+      wing.moveTo(shx, shy);
+      wing.quadraticCurveTo(shx + d * r * 0.85, shy - r * (1.1 * flap + 0.3), tipx, tipy);
+      wing.quadraticCurveTo(tipx - d * r * 0.2, tipy + r * 0.7, shx + d * r * 1.0, shy + r * 0.25);
+      wing.quadraticCurveTo(shx + d * r * 0.75, shy + r * 0.02, shx + d * r * 0.5, shy + r * 0.4);
+      wing.quadraticCurveTo(shx + d * r * 0.22, shy + r * 0.18, shx, shy + r * 0.28);
+      wing.closePath();
+      ctx.fillStyle = this._vgrad(ctx, shx, tipy, shy + r * 0.4, '#4a2418', '#221009');
+      ctx.fill(wing);
+      ctx.strokeStyle = 'rgba(255, 140, 66, 0.7)';
+      ctx.lineWidth = 1.2;
+      ctx.stroke(wing);
+    }
+
+    // Body (upright teardrop)
+    const body = new Path2D();
+    body.moveTo(s.x, cy - r * 0.95);
+    body.quadraticCurveTo(s.x + r * 0.85, cy - r * 0.3, s.x + r * 0.6, cy + r * 0.55);
+    body.quadraticCurveTo(s.x, cy + r * 1.0, s.x - r * 0.6, cy + r * 0.55);
+    body.quadraticCurveTo(s.x - r * 0.85, cy - r * 0.3, s.x, cy - r * 0.95);
+    body.closePath();
+    ctx.fillStyle = this._vgrad(ctx, s.x, cy - r, cy + r, '#5a2a1c', '#2a120c');
+    ctx.fill(body);
+    ctx.strokeStyle = 'rgba(255, 140, 66, 0.8)';
+    ctx.lineWidth = 1.4;
+    ctx.stroke(body);
+
+    // Belly plates
+    ctx.strokeStyle = 'rgba(210, 160, 130, 0.35)';
+    ctx.lineWidth = 1.2;
+    for (let i = 0; i < 2; i++) {
+      const py = cy + r * (0.15 + i * 0.3);
+      ctx.beginPath();
+      ctx.moveTo(s.x - r * (0.4 - i * 0.12), py);
+      ctx.quadraticCurveTo(s.x, py + r * 0.14, s.x + r * (0.4 - i * 0.12), py);
+      ctx.stroke();
+    }
+
+    // Tiny bone horns swept back
+    ctx.fillStyle = '#cbb9a4';
+    for (const d of [-1, 1]) {
+      ctx.beginPath();
+      ctx.moveTo(s.x + d * r * 0.35, cy - r * 0.75);
+      ctx.lineTo(s.x + d * r * 0.7 - dir * r * 0.15, cy - r * 1.25);
+      ctx.lineTo(s.x + d * r * 0.12, cy - r * 0.9);
+      ctx.closePath();
+      ctx.fill();
+    }
+
+    // Glowing ember eyes + snout glow
+    ctx.save();
+    ctx.fillStyle = '#ffb347';
+    ctx.shadowColor = '#ff8c42';
+    ctx.shadowBlur = 6;
+    for (const d of [-1, 1]) {
+      ctx.beginPath();
+      ctx.ellipse(s.x + d * r * 0.26 + dir * r * 0.08, cy - r * 0.45,
+                  1.9, 1.1, d * -0.3, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
+
     return body;
   }
 }

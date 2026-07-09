@@ -10,8 +10,8 @@
 
 export const CONFIG = {
   // Viewport / world
-  worldWidth: 2560,
-  worldHeight: 1440,
+  worldWidth: 5120,
+  worldHeight: 2880,
 
   // Player base stats (player.js applies upgrades on top of these)
   player: {
@@ -64,11 +64,43 @@ export const CONFIG = {
   // Wave pacing / difficulty curve (consumed by spawner in systems.js)
   waves: {
     firstWaveDelay: 1,
-    waveInterval: 20,   // seconds between waves
+    waveInterval: 30,   // seconds between waves
     baseSpawnRate: 1.5, // enemies/sec at wave 1
     spawnRateGrowth: 0.15,
     hpScaling: 0.12,    // per-wave multiplier add-ons
+    damageScaling: 0.05,    //contact damage
     speedScaling: 0.04,
+    finalWave: 15,      // boss wave: regular spawning stops, the dragon arrives
+    wyvernEscort: 30,   // wyverns that fly in alongside the dragon
+  },
+
+  // Final boss (consumed by boss.js). Tuned to be a real fight: the dragon
+  // is fast enough that pure kiting fails, firebreath punishes standing
+  // still, and the claw swipe punishes hugging it.
+  boss: {
+    hp: 3500,
+    radius: 46,
+    speed: 85,             // combat chase speed (enrage multiplies this)
+    arriveSpeed: 260,      // fly-in speed at wave start
+    contactDamage: 22,     // touching the dragon hurts
+    xp: 50,
+    enrageAt: 0.3,         // hp fraction; below this it speeds up + fires faster
+    fire: {
+      cooldown: 4.5,       // seconds between breaths
+      range: 720,          // only breathes when player is within this
+      sweep: (80 * Math.PI) / 180, // total sweep arc of the breath
+      duration: 1.1,       // seconds the breath lasts
+      interval: 0.09,      // seconds between fireballs during the sweep
+      speed: 270,          // fireball travel speed
+      damage: 16,          // per fireball
+    },
+    melee: {
+      range: 170,          // swipe reach (from dragon center)
+      arc: (120 * Math.PI) / 180,
+      damage: 38,
+      windup: 0.75,        // telegraph time before the swipe lands
+      cooldown: 4,
+    },
   },
 };
 
@@ -77,6 +109,8 @@ export const ENEMIES = {
   shade:  { hp: 20,  speed: 90,  damage: 8,  radius: 14, xp: 1, color: '#6c5ce7', behavior: 'chase' },
   brute:  { hp: 80,  speed: 55,  damage: 18, radius: 22, xp: 3, color: '#c0392b', behavior: 'chase' },
   swarm:  { hp: 8,   speed: 140, damage: 5,  radius: 9,  xp: 1, color: '#00cec9', behavior: 'chase' },
+  // The dragon's brood — only spawn as the wave-25 escort.
+  wyvern: { hp: 70,  speed: 115, damage: 14, radius: 15, xp: 5, color: '#ff8c42', behavior: 'chase' },
 };
 
 // Upgrade pool. id is stable; effect mutates the player's stat block.
@@ -84,6 +118,7 @@ export const ENEMIES = {
 //   tier:     'rare' | 'epic' — styles the level-up card; commons have none
 //   weight:   relative roll chance (default 1; rare ~0.25, epic ~0.1)
 //   requires: fn(player) — option only offered when this returns true
+//   note:     shown in the Abilities compendium (availability / stack info)
 export const UPGRADES = [
   // Commons ------------------------------------------------------------
   { id: 'dmg_up',   name: 'Sharper Rites',  desc: '+25% damage',        effect: (p) => { p.stats.damage *= 1.25; } },
@@ -91,15 +126,15 @@ export const UPGRADES = [
   { id: 'speed_up', name: 'Fleet Footed',   desc: '+15% move speed',    effect: (p) => { p.stats.speed *= 1.15; } },
   { id: 'hp_up',    name: 'Iron Will',      desc: '+25 max health',     effect: (p) => { p.stats.maxHealth += 25; p.health += 25; } },
   { id: 'magnet',   name: 'Soul Magnet',    desc: '+40% pickup radius', effect: (p) => { p.stats.pickupRadius *= 1.40; } },
-  { id: 'lucky',    name: 'Lucky Charm',    desc: '+5% health drop chance',
+  { id: 'lucky',    name: 'Lucky Charm',    desc: '+5% health drop chance', note: 'Stacks ×3',
     requires: (p) => (p.stats.luck || 0) < 0.15, // cap at 3 stacks
     effect: (p) => { p.stats.luck = (p.stats.luck || 0) + 0.05; } },
   // Ranged-only: pointless once the Spirit Blade replaces shooting.
-  { id: 'pierce',   name: 'Piercing Shot',  desc: 'Projectiles pierce +1',
+  { id: 'pierce',   name: 'Piercing Shot',  desc: 'Projectiles pierce +1', note: 'Ranged only',
     requires: (p) => p.hasWeapon('ranged'),
     effect: (p) => { p.stats.pierce = (p.stats.pierce || 0) + 1; } },
   // Melee-only follow-up so the blade has its own growth path.
-  { id: 'melee_edge', name: 'Honed Edge', desc: '+30% slash damage',
+  { id: 'melee_edge', name: 'Honed Edge', desc: '+30% slash damage', note: 'Spirit Blade only',
     requires: (p) => p.hasWeapon('melee'),
     effect: (p) => { p.stats.meleeMul = (p.stats.meleeMul || 1) * 1.30; } },
 
@@ -107,21 +142,25 @@ export const UPGRADES = [
   // Spirit Blade — replaces shooting with a sweeping melee slash.
   { id: 'melee_unlock', name: 'Spirit Blade', tier: 'rare', weight: 0.25,
     desc: 'Trade your shots for a spectral blade — sweeping slashes cleave every foe in reach',
+    note: 'Once per run · replaces shooting',
     requires: (p) => p.hasWeapon('ranged'),
     effect: (p) => { p.stats.meleeMul = 1; p.setWeapon('melee'); } },
   // Twin Shot — ranged evolution, stacks to a 3-shot fan.
   { id: 'twin_shot', name: 'Twin Shot', tier: 'rare', weight: 0.25,
     desc: 'Fire an extra projectile in a spread (stacks up to 3 shots)',
+    note: 'Ranged only · stacks ×2',
     requires: (p) => p.hasWeapon('ranged') && (p.stats.multishot || 1) < 3,
     effect: (p) => { p.stats.multishot = (p.stats.multishot || 1) + 1; } },
   // Echo Slash — melee evolution: a spectral reverse slash covers your back.
   { id: 'echo_slash', name: 'Echo Slash', tier: 'rare', weight: 0.25,
     desc: 'Every slash echoes behind you at 60% damage — no more backstabs',
+    note: 'Spirit Blade only · once per run',
     requires: (p) => p.hasWeapon('melee') && !p.stats.echo,
     effect: (p) => { p.stats.echo = true; } },
   // Vampiric Rites — lifesteal on ALL damage dealt (any weapon, nova too).
   { id: 'lifesteal', name: 'Vampiric Rites', tier: 'rare', weight: 0.25,
     desc: 'Heal 6% of all damage you deal (stacks up to 18%)',
+    note: 'Stacks ×3',
     requires: (p) => (p.stats.lifesteal || 0) < 0.18,
     effect: (p) => { p.stats.lifesteal = (p.stats.lifesteal || 0) + 0.06; } },
 
@@ -129,11 +168,13 @@ export const UPGRADES = [
   // Chrono Field — permanent slow aura around the player.
   { id: 'chrono', name: 'Chrono Field', tier: 'epic', weight: 0.1,
     desc: 'Time thickens around you — enemies inside your field move at half speed',
+    note: 'Once per run · the dragon resists it',
     requires: (p) => !p.stats.chrono,
     effect: (p) => { p.stats.chrono = true; } },
   // Holy Nova — periodic shockwave; stacks add damage per burst.
   { id: 'nova', name: 'Holy Nova', tier: 'epic', weight: 0.1,
     desc: 'Every 4s an expanding shockwave sears everything around you (stacks)',
+    note: 'Stacks ×3',
     requires: (p) => (p.stats.novaLevel || 0) < 3,
     effect: (p) => { p.stats.novaLevel = (p.stats.novaLevel || 0) + 1; } },
 ];

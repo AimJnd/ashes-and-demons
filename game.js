@@ -7,7 +7,7 @@
 import { CONFIG } from './config.js';
 import { Player } from './player.js';
 import { Spawner, Combat, Progression } from './systems.js';
-import { Hud, Screens, LevelUp, Leaderboard } from './ui.js';
+import { Hud, Screens, LevelUp, Leaderboard, Menu } from './ui.js';
 
 // Math helpers (merged from math.js) ---------------------------------
 export const Vec = {
@@ -44,7 +44,7 @@ const Camera = {
 
 // Arena: gothic stone floor, rune circles, ornate boundary ------------
 const Arena = {
-  TILE: 160, // big flagstones
+  TILE: 200, // big flagstones
 
   // Faint ceremonial circles baked into the floor (world coords).
   RUNES: [
@@ -157,6 +157,8 @@ class Game {
       projectiles: [],
       pickups: [],
       floaters: [], // floating damage numbers / VFX text
+      hazards: [],  // hostile projectiles (dragon fireballs)
+      boss: null,   // set by the spawner on the final wave
       spawner: new Spawner(),
       time: 0,
       kills: 0,
@@ -195,8 +197,9 @@ class Game {
     w.time += dt;
     w.player.update(dt, Input, w);
     w.spawner.update(dt, w);
-    for (const e of w.enemies)     e.update(dt, w.player);
+    for (const e of w.enemies)     e.update(dt, w.player, w); // boss needs world
     for (const p of w.projectiles) p.update(dt);
+    for (const h of w.hazards)     h.update(dt);
     for (const k of w.pickups)     k.update(dt, w.player);
     Combat.resolve(w); // may push new floaters on hit
     for (const f of w.floaters)    f.update(dt);
@@ -204,11 +207,18 @@ class Game {
     // Cull the dead so arrays don't grow unbounded.
     w.enemies = w.enemies.filter((e) => e.alive);
     w.projectiles = w.projectiles.filter((p) => p.alive);
+    w.hazards = w.hazards.filter((h) => h.alive);
     w.pickups = w.pickups.filter((k) => k.alive);
     w.floaters = w.floaters.filter((f) => f.alive);
 
     if (Progression.checkLevelUp(w.player)) this.openLevelUp();
-    if (!w.player.alive) this.gameOver();
+    // Victory: the final wave has fully arrived and nothing is left alive.
+    // Checked before the death check so a mutual-kill frame goes to the player.
+    if (w.player.alive && w.spawner.finalWaveArrived && w.enemies.length === 0) {
+      this.victory();
+    } else if (!w.player.alive) {
+      this.gameOver();
+    }
     Camera.follow(w.player);
   }
 
@@ -231,6 +241,9 @@ class Game {
 
     // Projectiles render on top of everyone.
     for (const p of this.world.projectiles) p.render(ctx, Camera);
+
+    // Hostile fireballs blaze above the crowd.
+    for (const h of this.world.hazards) h.render(ctx, Camera);
 
     // Damage numbers sit above everything in the world.
     for (const f of this.world.floaters) f.render(ctx, Camera);
@@ -271,16 +284,24 @@ class Game {
     });
   }
 
-  gameOver() {
-    this.state = 'gameover';
+  gameOver() { this._end(false); }
+
+  // GGs — dragon down, field clear on the final wave.
+  victory() { this._end(true); }
+
+  _end(victory) {
+    this.state = victory ? 'victory' : 'gameover';
     const w = this.world;
+    const base = (w.kills * 10 + Math.floor(w.time)) * 0.5 * w.player.level;
     const stats = {
-      score: (w.kills * 10 + Math.floor(w.time)) * 0.5*w.player.level,
+      // Winning doubles the run score and adds a flat clear bonus.
+      score: Math.round(victory ? base * 2 + 5000 : base),
       wave: w.spawner.wave,
       time: w.time,
       kills: w.kills,
+      win: victory, // persisted to the leaderboard (crown marker)
     };
-    Screens.show('gameover');
+    Screens.showEnd(victory);
     Leaderboard.show(stats); // render board + arm the save-score flow
   }
 }
@@ -300,6 +321,7 @@ function main() {
 
   Input.init();
   Leaderboard.init(); // cache DOM + bind the save-score button once
+  Menu.init();        // start-menu panels (Abilities / Leaderboard)
   const game = new Game(canvas);
   Screens.bind({ onStart: () => game.start(), onRestart: () => game.start() });
   Screens.show('start');

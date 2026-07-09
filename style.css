@@ -229,7 +229,9 @@ html, body {
 /* Level-up cards ---------------------------------------------------- */
 #levelup-cards { display: flex; gap: 1rem; }
 
-#levelup-cards .card {
+/* Upgrade/ability cards — shared between the level-up modal and the
+   Abilities compendium so both always look identical. */
+.card {
   width: 200px;
   padding: 1.25rem;
   background: #16161f;
@@ -239,16 +241,25 @@ html, body {
   text-align: center;
   transition: transform 0.08s ease, background 0.08s ease;
 }
-#levelup-cards .card:hover {
+.card:hover {
   background: #20203a;
   transform: translateY(-4px);
 }
-#levelup-cards .card h3 { margin-bottom: 0.5rem; color: var(--accent); }
-#levelup-cards .card p { font-size: 0.9rem; opacity: 0.85; }
+.card h3 { margin-bottom: 0.5rem; color: var(--accent); }
+.card p { font-size: 0.9rem; opacity: 0.85; }
+
+/* Availability / stacking footnote (Abilities compendium) */
+.card .note {
+  margin-top: 0.5rem;
+  font-size: 0.68rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  opacity: 0.55;
+}
 
 /* Tiered upgrade cards ----------------------------------------------- */
 /* Shared pill tag ("RARE" / "EPIC") */
-#levelup-cards .tier-tag {
+.tier-tag {
   display: inline-block;
   margin-bottom: 0.4rem;
   padding: 0.1rem 0.5rem;
@@ -260,40 +271,102 @@ html, body {
 }
 
 /* Rare (e.g. Spirit Blade, Twin Shot) — golden, glowing */
-#levelup-cards .card.rare {
+.card.rare {
   border-color: #ffd166;
   background: linear-gradient(160deg, #211a08, #16161f 70%);
   animation: rare-pulse 1.6s ease-in-out infinite;
 }
-#levelup-cards .card.rare:hover {
+.card.rare:hover {
   background: linear-gradient(160deg, #2c2208, #20203a 70%);
 }
-#levelup-cards .card.rare h3 { color: #ffd166; }
-#levelup-cards .card.rare .tier-tag { background: #ffd166; }
+.card.rare h3 { color: #ffd166; }
+.card.rare .tier-tag { background: #ffd166; }
 @keyframes rare-pulse {
   0%, 100% { box-shadow: 0 0 12px rgba(255, 209, 102, 0.25); }
   50%      { box-shadow: 0 0 24px rgba(255, 209, 102, 0.55); }
 }
 
 /* Epic (Chrono Field, Holy Nova) — violet, stronger glow, faster pulse */
-#levelup-cards .card.epic {
+.card.epic {
   border-color: #d16bff;
   background: linear-gradient(160deg, #1d0a26, #16161f 70%);
   animation: epic-pulse 1.1s ease-in-out infinite;
 }
-#levelup-cards .card.epic:hover {
+.card.epic:hover {
   background: linear-gradient(160deg, #2a0e38, #20203a 70%);
   transform: translateY(-4px) scale(1.03);
 }
-#levelup-cards .card.epic h3 { color: #d16bff; }
-#levelup-cards .card.epic .tier-tag { background: #d16bff; }
+.card.epic h3 { color: #d16bff; }
+.card.epic .tier-tag { background: #d16bff; }
 @keyframes epic-pulse {
   0%, 100% { box-shadow: 0 0 16px rgba(209, 107, 255, 0.35); }
   50%      { box-shadow: 0 0 32px rgba(209, 107, 255, 0.7); }
 }
 
+/* Start-menu panels (Abilities / Leaderboard) ------------------------- */
+.menu-panel {
+  /* Sits over the start screen; darker wash so the hellscape glows through */
+  background: rgba(5, 3, 10, 0.82);
+  gap: 1.25rem;
+}
+.menu-panel h2 {
+  font-size: 1.8rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--fg);
+}
+
+#abilities-cards {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.75rem;
+  width: min(94vw, 1000px);
+  max-height: 62vh;
+  overflow-y: auto;
+  padding: 0.5rem;
+}
+.ability-group-title {
+  font-size: 0.75rem;
+  letter-spacing: 0.25em;
+  text-transform: uppercase;
+  opacity: 0.55;
+  margin-top: 0.5rem;
+}
+.ability-group {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.8rem;
+}
+/* Compendium cards are informational, not clickable */
+#abilities-cards .card {
+  width: 185px;
+  padding: 1rem;
+  cursor: default;
+}
+#abilities-cards .card:hover { transform: none; }
+
 /* Game over + leaderboard ------------------------------------------- */
 #screen-gameover h2 { color: var(--danger); font-size: 2.25rem; }
+
+/* Victory variant: gold, glowing, triumphant */
+#screen-gameover.victory h2 {
+  color: #ffd23e;
+  text-shadow: 0 0 24px rgba(255, 180, 40, 0.6), 0 2px 0 #7a4a06;
+  animation: victory-glow 2s ease-in-out infinite;
+}
+#end-subtitle {
+  font-size: 0.95rem;
+  letter-spacing: 0.06em;
+  color: rgba(255, 226, 160, 0.85);
+  min-height: 1.2em;
+}
+#screen-gameover:not(.victory) #end-subtitle { display: none; }
+@keyframes victory-glow {
+  0%, 100% { text-shadow: 0 0 18px rgba(255, 180, 40, 0.5), 0 2px 0 #7a4a06; }
+  50%      { text-shadow: 0 0 34px rgba(255, 200, 60, 0.9), 0 2px 0 #7a4a06; }
+}
 
 #gameover-stats {
   font-size: 1rem;
@@ -336,8 +409,9 @@ html, body {
 #btn-restart { background: #2a2a3a; }
 #btn-restart:hover:not(:disabled) { background: #3a3a52; }
 
-/* Leaderboard list */
-#leaderboard-list {
+/* Leaderboard list — class-based: shared by the game-over screen and the
+   start-menu Leaderboard panel. */
+.leaderboard-list {
   list-style: none;
   width: 320px;
   max-width: 80vw;
@@ -349,7 +423,7 @@ html, body {
   border-radius: 10px;
 }
 
-#leaderboard-list li {
+.leaderboard-list li {
   display: flex;
   align-items: center;
   gap: 0.75rem;
@@ -357,31 +431,34 @@ html, body {
   border-radius: 6px;
   font-variant-numeric: tabular-nums;
 }
-#leaderboard-list li + li { margin-top: 2px; }
-#leaderboard-list li:nth-child(odd) { background: rgba(255, 255, 255, 0.03); }
+.leaderboard-list li + li { margin-top: 2px; }
+.leaderboard-list li:nth-child(odd) { background: rgba(255, 255, 255, 0.03); }
 
-#leaderboard-list .rank {
+.leaderboard-list .rank {
   width: 1.75rem;
   text-align: right;
   color: var(--accent);
   font-weight: 700;
 }
-#leaderboard-list .name {
+.leaderboard-list .name {
   flex: 1;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-#leaderboard-list .score { font-weight: 600; }
+.leaderboard-list .score { font-weight: 600; }
 
 /* The entry just saved this session */
-#leaderboard-list li.you {
+.leaderboard-list li.you {
   background: rgba(138, 43, 226, 0.25);
   outline: 1px solid var(--accent);
 }
 
-#leaderboard-list li.empty {
+.leaderboard-list li.empty {
   justify-content: center;
   opacity: 0.6;
   font-style: italic;
 }
+
+/* Menu leaderboard gets more vertical room than the game-over one */
+#menu-leaderboard-list { max-height: 55vh; }

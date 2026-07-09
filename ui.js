@@ -4,6 +4,8 @@
   logic — it reflects state and reports user choices back via callbacks.
 */
 
+import { UPGRADES } from './config.js';
+
 const LEADERBOARD_KEY = 'exorcist_survival_scores';
 
 // HUD ----------------------------------------------------------------
@@ -26,7 +28,9 @@ export const Hud = {
     this.el.health.textContent = `HP ${Math.ceil(p.health)}/${p.stats.maxHealth}`;
     this.el.xp.textContent = `XP ${p.xp} / ${p.xpToNext}`;
     this.el.level.textContent = `Lv ${p.level}`;
-    this.el.wave.textContent = `Wave ${world.spawner.wave}`;
+    this.el.wave.textContent = world.spawner.bossSpawned
+      ? 'FINAL WAVE'
+      : `Wave ${world.spawner.wave}`;
     this.el.timer.textContent = `${Math.floor(world.time)}s`;
     this.el.kills.textContent = `Kills ${world.kills}`;
   },
@@ -34,7 +38,7 @@ export const Hud = {
 
 // Screens: start / pause / game over ---------------------------------
 export const Screens = {
-  _ids: ['start', 'levelup', 'gameover', 'pause'],
+  _ids: ['start', 'levelup', 'gameover', 'pause', 'abilities', 'menu-leaderboard'],
   show(id) {
     const el = document.getElementById(`screen-${id}`);
     if (el) el.classList.remove('hidden');
@@ -44,6 +48,20 @@ export const Screens = {
     if (el) el.classList.add('hidden');
   },
   hideAll() { this._ids.forEach((id) => this.hide(id)); },
+  // End screen doubles as defeat AND victory — swap title/tone and show.
+  showEnd(victory) {
+    const screen = document.getElementById('screen-gameover');
+    const title = document.getElementById('end-title');
+    const sub = document.getElementById('end-subtitle');
+    if (screen) screen.classList.toggle('victory', victory);
+    if (title) title.textContent = victory ? 'VICTORY' : 'You Died';
+    if (sub) {
+      sub.textContent = victory
+        ? 'Ashmaw has fallen. The realm goes quiet. GGs.'
+        : '';
+    }
+    this.show('gameover');
+  },
   // Wire start/restart buttons; call provided handlers.
   bind({ onStart, onRestart }) {
     const start = document.getElementById('btn-start');
@@ -163,7 +181,12 @@ export const Leaderboard = {
 
   // Paint the top scores into the <ol>. Pass an entry to highlight it.
   render(highlight) {
-    const listEl = this.el.list;
+    this.renderInto(this.el.list, highlight);
+  },
+
+  // Same painter, but into any list element — the start-menu leaderboard
+  // panel reuses it so the two boards can never drift apart.
+  renderInto(listEl, highlight) {
     if (!listEl) return;
     const scores = this.load();
     listEl.innerHTML = '';
@@ -190,7 +213,8 @@ export const Leaderboard = {
 
       const nameEl = document.createElement('span');
       nameEl.className = 'name';
-      nameEl.textContent = s.name;        // textContent — no HTML injection
+      // Crown for runs that actually slew the dragon. textContent — no HTML injection.
+      nameEl.textContent = (s.win ? '👑 ' : '') + s.name;
 
       const scoreEl = document.createElement('span');
       scoreEl.className = 'score';
@@ -199,5 +223,63 @@ export const Leaderboard = {
       li.append(rank, nameEl, scoreEl);
       listEl.appendChild(li);
     });
+  },
+};
+
+// Start-menu panels: Abilities compendium + Leaderboard viewer ---------
+export const Menu = {
+  // Wire the menu buttons once at boot (called from game.js main()).
+  init() {
+    const wire = (id, fn) => {
+      const el = document.getElementById(id);
+      if (el) el.addEventListener('click', fn);
+    };
+    wire('btn-abilities', () => {
+      this.renderAbilities();
+      {Screens.hide('start');Screens.show('abilities');};
+    });
+    wire('btn-leaderboard', () => {
+      // Re-render on every open so fresh scores always show.
+      Leaderboard.renderInto(document.getElementById('menu-leaderboard-list'));
+      {Screens.hide('start');Screens.show('menu-leaderboard');};
+    });
+    wire('btn-abilities-back',   () => {Screens.show('start') ; Screens.hide('abilities');});
+    wire('btn-leaderboard-back', () => {Screens.show('start') ; Screens.hide('menu-leaderboard');});
+  },
+
+  // Build the compendium from the live UPGRADES pool, grouped by tier,
+  // reusing the level-up card design — it can never go stale when new
+  // abilities are added to config.js.
+  renderAbilities() {
+    const container = document.getElementById('abilities-cards');
+    if (!container) return;
+    container.innerHTML = '';
+
+    const groups = [
+      ['Common', (u) => !u.tier],
+      ['Rare',   (u) => u.tier === 'rare'],
+      ['Epic',   (u) => u.tier === 'epic'],
+    ];
+    for (const [label, match] of groups) {
+      const ups = UPGRADES.filter(match);
+      if (!ups.length) continue;
+
+      const title = document.createElement('h3');
+      title.className = 'ability-group-title';
+      title.textContent = label;
+      container.appendChild(title);
+
+      const row = document.createElement('div');
+      row.className = 'ability-group';
+      for (const up of ups) {
+        const card = document.createElement('div');
+        card.className = up.tier ? `card ${up.tier}` : 'card';
+        const tag = up.tier ? `<span class="tier-tag">${up.tier.toUpperCase()}</span>` : '';
+        const note = up.note ? `<p class="note">${up.note}</p>` : '';
+        card.innerHTML = `${tag}<h3>${up.name}</h3><p>${up.desc}</p>${note}`;
+        row.appendChild(card);
+      }
+      container.appendChild(row);
+    }
   },
 };

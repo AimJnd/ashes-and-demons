@@ -58,15 +58,28 @@
 
       <nav class="main-menu">
         <button id="btn-start" class="menu-btn primary">Start Game</button>
-          <!--OTHER BUTTONS TO BE ADDED-->
+        <button id="btn-abilities" class="menu-btn">Abilities</button>
+        <button id="btn-leaderboard" class="menu-btn">Leaderboard</button>
+        <!--OTHER BUTTONS TO BE ADDED-->
         <!--  <button id="btn-options" class="menu-btn">Options</button>
-        <button id="btn-upgrades" class="menu-btn">
-          Upgrades <span class="sub">(where are they?)</span>
-        </button>
         <button id="btn-quit" class="menu-btn">Quit</button> -->
       </nav>
 
       <footer class="credits">Developed by C&J</footer>
+    </div>
+
+    <!-- Abilities compendium (opened from the start menu; overlays it) -->
+    <div id="screen-abilities" class="screen menu-panel hidden">
+      <h2>Abilities</h2>
+      <div id="abilities-cards"></div>
+      <button id="btn-abilities-back" class="menu-btn">Back</button>
+    </div>
+
+    <!-- Leaderboard viewer (opened from the start menu; overlays it) -->
+    <div id="screen-menu-leaderboard" class="screen menu-panel hidden">
+      <h2>Leaderboard</h2>
+      <ol id="menu-leaderboard-list" class="leaderboard-list"></ol>
+      <button id="btn-leaderboard-back" class="menu-btn">Back</button>
     </div>
 
     <!-- Level-up modal: 3 upgrade cards, pauses the game -->
@@ -75,13 +88,14 @@
       <div id="levelup-cards"></div>
     </div>
 
-    <!-- Game over + leaderboard -->
+    <!-- End screen (defeat or victory) + leaderboard -->
     <div id="screen-gameover" class="screen hidden">
-      <h2>You Died</h2>
+      <h2 id="end-title">You Died</h2>
+      <p id="end-subtitle"></p>
       <div id="gameover-stats"></div>
       <input id="leaderboard-name" maxlength="12" placeholder="Name" />
       <button id="btn-save-score">Save Score</button>
-      <ol id="leaderboard-list"></ol>
+      <ol id="leaderboard-list" class="leaderboard-list"></ol>
       <button id="btn-restart">Play Again</button>
     </div>
 
