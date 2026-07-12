@@ -47,6 +47,28 @@ export const CONFIG = {
     },
     // Twin Shot: angular gap between projectiles in the fan.
     multishotSpread: (10 * Math.PI) / 180,
+    // Crimson Boomerang (altar relic): auto-thrown, pierces everything,
+    // flies out `range` then homes back to the player.
+    boomerang: {
+      unlockWave: 10,   // relic materializes on the altar at this wave
+      cooldown: 4,
+      damageMul: 4.5,   // dmg = stats.damage * this; 45 at base damage,
+                        // one-shots wave-10 shades (~41.6 hp) and swarms
+      speed: 420,
+      range: 380,
+      radius: 14,
+    },
+  },
+
+  // The altar (far from spawn) where the Crimson Boomerang relic waits.
+  altar: { x: 4520, y: 520 },
+
+  // Spike-trap tiles (see bg.webp). Standing on one past the grace
+  // period deals damage every tick interval until you step off.
+  trap: {
+    damage: 8,
+    grace: 0.8,      // seconds you can stand on spikes before they bite
+    interval: 0.75,  // seconds between damage ticks while you stay
   },
 
   // XP / leveling. xpForLevel(n) lives in progression (systems.js).
@@ -57,7 +79,7 @@ export const CONFIG = {
 
   // Loot drops on enemy death (consumed by Combat in systems.js)
   drops: {
-    healthChance: 0.08, // chance per kill that an enemy drops a health pickup
+    healthChance: 0.008, // chance per kill that an enemy drops a health pickup
     healthValue: 15,    // flat HP restored when collected
   },
 
@@ -178,3 +200,32 @@ export const UPGRADES = [
     requires: (p) => (p.stats.novaLevel || 0) < 3,
     effect: (p) => { p.stats.novaLevel = (p.stats.novaLevel || 0) + 1; } },
 ];
+
+// Arena tiles. One hash decides each tile's look AND whether it's a spike
+// trap, so the renderer (game.js) and the damage check (player.js) can
+// never disagree about where the traps are.
+export const TILE = 100;
+export function isTrapTile(ix, iy) {
+  if (ix < 0 || iy < 0 ||
+      ix >= CONFIG.worldWidth / TILE || iy >= CONFIG.worldHeight / TILE) return false;
+  // Keep the spawn area and the altar dais safe.
+  const cx = Math.floor(CONFIG.worldWidth / 2 / TILE);
+  const cy = Math.floor(CONFIG.worldHeight / 2 / TILE);
+  if (Math.abs(ix - cx) <= 2 && Math.abs(iy - cy) <= 2) return false;
+  const ax = Math.floor(CONFIG.altar.x / TILE);
+  const ay = Math.floor(CONFIG.altar.y / TILE);
+  if (Math.abs(ix - ax) <= 1 && Math.abs(iy - ay) <= 1) return false;
+  const h = ((ix * 73856093) ^ (iy * 19349663)) >>> 0;
+  return h % 71 === 0; // ~1.4% of tiles
+}
+
+// Player-facing settings (persisted). ui.js writes, player.js reads.
+// localStorage is guarded so the Node sim/test scripts can import this file.
+const store = typeof localStorage !== 'undefined' ? localStorage : null;
+export const Settings = {
+  controls: store?.getItem('ws_controls') || 'keyboard', // 'keyboard' | 'mouse'
+  setControls(mode) {
+    this.controls = mode;
+    store?.setItem('ws_controls', mode);
+  },
+};

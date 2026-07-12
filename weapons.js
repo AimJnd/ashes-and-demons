@@ -14,7 +14,7 @@
 */
 
 import { CONFIG } from './config.js';
-import { Projectile } from './entities.js';
+import { Projectile, Boomerang } from './entities.js';
 import { Combat } from './systems.js';
 
 // Nearest living enemy to (x, y), optionally capped to maxDist.
@@ -140,8 +140,9 @@ export class SlashVFX {
     if (this.life <= 0) this.alive = false;
   }
 
-  // Blade streak: a crisp arc that sweeps across the cone with a fading
-  // trail behind the leading edge — reads as a slash, not a filled slice.
+  // Crescent blade sweep: a filled crescent — thick right behind the
+  // leading edge, tapering to a point at the trail — with a white-hot
+  // blade line at the front. Reads as a sword swing, not a projectile.
   render(ctx, camera) {
     if (this.delay > 0) return;
     const s = camera.toScreen(this.x, this.y);
@@ -149,32 +150,60 @@ export class SlashVFX {
     const from = this.angle - this.arc / 2;
     const lead = from + this.arc * Math.min(1, t * 1.75);
     const fade = 1 - t;
+    const span = lead - from;
+    if (span <= 0.02) return;
+
+    // Outer edge hugs the cone rim from trail to lead; inner edge bows
+    // in behind the blade and rejoins the rim at the trailing tip.
+    const crescent = (Rout, depth) => {
+      const p = new Path2D();
+      p.arc(s.x, s.y, Rout, from, lead);
+      const N = 12;
+      for (let i = N; i >= 0; i--) {
+        const u = i / N; // 1 = leading edge, 0 = trailing tip
+        const a = from + span * u;
+        const r = Rout - depth * Math.pow(u, 0.65);
+        p.lineTo(s.x + Math.cos(a) * r, s.y + Math.sin(a) * r);
+      }
+      p.closePath();
+      return p;
+    };
 
     ctx.save();
     ctx.lineCap = 'round';
-    // Trailing streak: stacked arcs, widest/faintest at the back, with a
-    // bright hot core — reads as one motion-blurred blade sweep.
-    const R = this.range * 0.82;
-    for (const [w, back, a, col] of [
-      [12, 0.36, 0.12, SLASH_COLOR],
-      [7,  0.22, 0.30, SLASH_COLOR],
-      [3.5, 0.11, 0.70, '#e6fbff'],
-    ]) {
-      ctx.globalAlpha = a * fade;
-      ctx.strokeStyle = col;
-      ctx.lineWidth = w;
-      ctx.beginPath();
-      ctx.arc(s.x, s.y, R, Math.max(from, lead - this.arc * back), lead);
-      ctx.stroke();
-    }
-    // White-hot cap right at the leading edge.
-    ctx.globalAlpha = 0.9 * fade;
+    const R = this.range;
+    // Wide spectral body, then a tighter hot core inside it.
+    ctx.globalAlpha = 0.30 * fade;
+    ctx.fillStyle = SLASH_COLOR;
+    ctx.fill(crescent(R, R * 0.5));
+    ctx.globalAlpha = 0.55 * fade;
+    ctx.fillStyle = '#e6fbff';
+    ctx.fill(crescent(R * 0.96, R * 0.28));
+
+    // The blade itself: a white-hot edge at the leading angle.
+    ctx.globalAlpha = Math.min(1, 1.2 * fade);
     ctx.strokeStyle = '#ffffff';
     ctx.lineWidth = 3;
     ctx.beginPath();
-    ctx.arc(s.x, s.y, R, lead - 0.06, lead + 0.02);
+    ctx.moveTo(s.x + Math.cos(lead) * R * 0.4, s.y + Math.sin(lead) * R * 0.4);
+    ctx.lineTo(s.x + Math.cos(lead) * R, s.y + Math.sin(lead) * R);
     ctx.stroke();
     ctx.restore();
+  }
+}
+
+// Crimson Boomerang (altar relic passive) --------------------------------
+// Dormant until stats.boomerang is set by claiming the altar. Every
+// cooldown, hurls a piercing boomerang in a random direction.
+export class BoomerangPassive {
+  constructor() { this._cd = 0; }
+
+  update(dt, player, world) {
+    if (!player.stats.boomerang) return;
+    this._cd -= dt;
+    if (this._cd > 0) return;
+    this._cd = CONFIG.weapons.boomerang.cooldown;
+    world.projectiles.push(new Boomerang(player, Math.random() * Math.PI * 2));
   }
 }
 

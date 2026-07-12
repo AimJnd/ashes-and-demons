@@ -88,8 +88,94 @@ html, body {
   100% { transform: translateY(-92vh) scale(calc(var(--s, 1) * 0.35)); opacity: 0; }
 }
 
+/* Summoning ring — the arena's floor runes, hanging behind the title.
+   Two rings counter-rotate so the circle feels "armed". */
+.summon-ring {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: min(72vmin, 620px);
+  height: min(72vmin, 620px);
+  transform: translate(-50%, -58%);
+  color: rgba(190, 120, 255, 0.5);
+  filter: drop-shadow(0 0 14px rgba(138, 43, 226, 0.45));
+  pointer-events: none;
+  z-index: 1;
+}
+.ring-outer, .ring-inner { transform-origin: 100px 100px; }
+.ring-outer { animation: ring-spin 70s linear infinite; }
+.ring-inner { animation: ring-spin 45s linear infinite reverse; opacity: 0.75; }
+@keyframes ring-spin { to { transform: rotate(360deg); } }
+
+/* The demon: horned silhouette rising out of the lava glow */
+.demon {
+  position: absolute;
+  bottom: -36px;
+  right: -70px;
+  width: min(560px, 72vw);
+  transform: rotate(-7deg);
+  transform-origin: bottom center;
+  pointer-events: none;
+  z-index: 1;
+}
+.demon-body {
+  fill: #1a0403;
+  stroke: rgba(255, 106, 24, 0.35); /* thin molten rim from the backlight */
+  stroke-width: 1.5;
+  filter: drop-shadow(0 -6px 30px rgba(0, 0, 0, 0.55));
+}
+.demon-eye {
+  fill: #ffb13d;
+  filter: drop-shadow(0 0 6px rgba(255, 140, 30, 0.9));
+  animation: demon-smolder 4.2s ease-in-out infinite;
+}
+@keyframes demon-smolder {
+  0%, 100% { fill: #ffb13d; opacity: 0.95; }
+  8%       { opacity: 0.35; }  /* slow blink */
+  12%      { opacity: 0.95; }
+  55%      { fill: #ff5a10; }
+}
+
 /* Title block -------------------------------------------------------- */
-.title-block { position: relative; z-index: 2; text-align: center; }
+.title-block {
+  position: relative;
+  z-index: 2;
+  text-align: center;
+  animation: title-slam 0.55s cubic-bezier(0.2, 1.4, 0.4, 1) backwards;
+}
+@keyframes title-slam {
+  from { transform: scale(1.7); opacity: 0; }
+}
+
+/* The whiff: every few seconds a spectral slash sweeps at the title…
+   and the title dodges it. The two animations share one 7s clock. */
+.title-block::after {
+  content: '';
+  position: absolute;
+  top: 42%;
+  left: -60%;
+  width: 55%;
+  height: 10px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, transparent, #cffcff 45%, #ffffff 60%, transparent);
+  filter: blur(1.5px) drop-shadow(0 0 10px rgba(159, 245, 255, 0.9));
+  transform: rotate(-14deg);
+  opacity: 0;
+  pointer-events: none;
+  animation: whiff-slash 7s linear infinite;
+}
+@keyframes whiff-slash {
+  0%   { left: -60%;  opacity: 0; }
+  1%   { opacity: 1; }
+  7%   { left: 110%;  opacity: 1; }
+  8%, 100% { left: 110%; opacity: 0; }
+}
+@keyframes title-dodge {
+  0%, 1.5%  { transform: none; }
+  4%        { transform: translateY(10px) scaleY(0.94) rotate(-1.2deg); } /* duck! */
+  8%        { transform: none; }
+  100%      { transform: none; }
+}
 
 .game-title {
   font-family: 'Luckiest Guy', system-ui, sans-serif;
@@ -108,7 +194,10 @@ html, body {
   filter:
     drop-shadow(0 4px 0 #7a1f06)
     drop-shadow(0 0 26px rgba(255, 96, 0, 0.75));
-  animation: title-flicker 3.5s ease-in-out infinite;
+  animation:
+    title-flicker 3.5s ease-in-out infinite,
+    title-dodge 7s linear infinite; /* ducks under the whiff-slash sweep */
+  will-change: transform, filter;
 }
 @keyframes title-flicker {
   0%, 100% { filter: drop-shadow(0 4px 0 #7a1f06) drop-shadow(0 0 26px rgba(255, 96, 0, 0.75)); }
@@ -126,56 +215,101 @@ html, body {
   text-shadow: 0 2px 0 #7a1f06, 0 0 14px rgba(255, 120, 0, 0.6);
 }
 
-/* Main menu ---------------------------------------------------------- */
+/* Main menu — obsidian rune slabs -------------------------------------- */
 .main-menu {
   position: relative;
   z-index: 2;
   display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
-  gap: 1rem;
-  max-width: min(92vw, 900px);
+  flex-direction: column;
+  align-items: center;
+  gap: 0.7rem;
 }
 
 .menu-btn {
-  font-family: inherit;
-  font-weight: 800;
-  font-size: clamp(0.85rem, 2vw, 1.2rem);
-  letter-spacing: 1px;
-  text-transform: uppercase;
-  color: #f2e7cf;
-  padding: 0.85rem 1.6rem;
-  background: linear-gradient(#5a5a6b, #2b2b37);
-  border: 3px solid #15151d;
-  border-radius: 12px;
+  position: relative;
+  width: min(340px, 84vw);
+  padding: 0.55rem 2.4rem 0.7rem;
+  font-family: 'Grenze Gotisch', 'Luckiest Guy', serif;
+  font-weight: 700;
+  font-size: 1.45rem;
+  letter-spacing: 0.05em;
+  color: #d9cdbf;
+  text-shadow: 0 2px 3px rgba(0, 0, 0, 0.8);
+  background: linear-gradient(180deg, #221e2e, #100d18);
+  border: 1px solid #3c3354;
+  border-radius: 5px;
   cursor: pointer;
-  /* Beveled stone: top highlight, bottom shade, and a chunky drop base */
   box-shadow:
-    inset 0 2px 0 rgba(255, 255, 255, 0.16),
-    inset 0 -4px 0 rgba(0, 0, 0, 0.45),
-    0 6px 0 #0b0b11,
-    0 8px 14px rgba(0, 0, 0, 0.5);
-  transition: transform 0.07s ease, filter 0.07s ease;
+    inset 0 1px 0 rgba(255, 255, 255, 0.07),
+    0 4px 10px rgba(0, 0, 0, 0.55);
+  transition: transform 0.12s ease, border-color 0.12s ease,
+              box-shadow 0.12s ease, color 0.12s ease;
 }
-.menu-btn:hover { filter: brightness(1.12); transform: translateY(-2px); }
-.menu-btn:active {
-  transform: translateY(4px);
+/* Rune diamonds flanking the label; they ignite on hover */
+.menu-btn::before,
+.menu-btn::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  width: 8px;
+  height: 8px;
+  background: #8a2be2;
+  opacity: 0.35;
+  transform: translateY(-50%) rotate(45deg);
+  transition: opacity 0.12s ease, box-shadow 0.12s ease;
+}
+.menu-btn::before { left: 16px; }
+.menu-btn::after  { right: 16px; }
+.menu-btn:hover, .menu-btn:focus-visible {
+  color: #ffffff;
+  border-color: #9b5cf0;
+  transform: translateY(-2px);
   box-shadow:
-    inset 0 2px 0 rgba(255, 255, 255, 0.12),
-    inset 0 -2px 0 rgba(0, 0, 0, 0.45),
-    0 2px 0 #0b0b11;
+    inset 0 0 22px rgba(138, 43, 226, 0.18),
+    0 0 20px rgba(138, 43, 226, 0.4),
+    0 4px 12px rgba(0, 0, 0, 0.55);
 }
+.menu-btn:hover::before, .menu-btn:hover::after,
+.menu-btn:focus-visible::before, .menu-btn:focus-visible::after {
+  opacity: 1;
+  box-shadow: 0 0 8px #a45cff;
+}
+.menu-btn:active { transform: translateY(1px); }
+.menu-btn:focus-visible { outline: 2px solid #cffcff; outline-offset: 3px; }
 
-/* Highlighted call-to-action */
+/* Highlighted call-to-action: molten, lit by the hellscape */
 .menu-btn.primary {
   color: #fff;
-  background: linear-gradient(#ff912f, #e0490d);
-  border-color: #7a2406;
+  background: linear-gradient(180deg, #ff912f, #c33107);
+  border-color: #ffb13d;
+  text-shadow: 0 2px 0 rgba(122, 36, 6, 0.9);
   box-shadow:
-    inset 0 2px 0 rgba(255, 255, 255, 0.35),
-    inset 0 -4px 0 rgba(0, 0, 0, 0.3),
-    0 6px 0 #7a2406,
-    0 0 22px rgba(255, 110, 0, 0.7);
+    inset 0 1px 0 rgba(255, 255, 255, 0.35),
+    0 0 26px rgba(255, 110, 0, 0.6),
+    0 4px 10px rgba(0, 0, 0, 0.55);
+}
+.menu-btn.primary::before, .menu-btn.primary::after {
+  background: #ffe9a8;
+  opacity: 0.8;
+}
+.menu-btn.primary:hover, .menu-btn.primary:focus-visible {
+  border-color: #ffd24a;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.35),
+    0 0 36px rgba(255, 130, 0, 0.85),
+    0 4px 12px rgba(0, 0, 0, 0.55);
+}
+
+/* Staggered rise on load (start menu only) */
+.main-menu .menu-btn {
+  animation: btn-rise 0.4s ease-out backwards;
+}
+.main-menu .menu-btn:nth-child(1) { animation-delay: 0.25s; }
+.main-menu .menu-btn:nth-child(2) { animation-delay: 0.34s; }
+.main-menu .menu-btn:nth-child(3) { animation-delay: 0.43s; }
+.main-menu .menu-btn:nth-child(4) { animation-delay: 0.52s; }
+@keyframes btn-rise {
+  from { transform: translateY(16px); opacity: 0; }
 }
 
 /* "(where are they?)" sub-label under Upgrades */
@@ -192,6 +326,7 @@ html, body {
 .credits {
   position: absolute;
   bottom: 1rem;
+  left: 1.25rem;
   z-index: 2;
   font-size: 0.7rem;
   letter-spacing: 2px;
@@ -225,6 +360,76 @@ html, body {
   color: #ff8b96;
   border-color: rgba(255, 60, 90, 0.45);
 }
+
+/* Ability icons ------------------------------------------------------ */
+/* Card artwork (level-up modal + compendium). Commons draw in
+   currentColor, so the tier rules below tint them; rare/epic art
+   is self-colored and ignores it. */
+.card-icon {
+  width: 52px;
+  height: 52px;
+  margin: 0.1rem auto 0.45rem;
+  color: var(--accent);
+  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.6));
+}
+.card-icon svg { width: 100%; height: 100%; display: block; }
+.card.rare .card-icon { color: #ffd166; filter: drop-shadow(0 0 8px rgba(255, 209, 102, 0.45)); }
+.card.epic .card-icon { color: #d16bff; filter: drop-shadow(0 0 8px rgba(209, 107, 255, 0.5)); }
+
+/* Small inline icon inside pause-menu chips */
+.ability-chip { display: inline-flex; align-items: center; gap: 0.4rem; }
+.chip-icon { width: 16px; height: 16px; flex: none; color: var(--accent); }
+.chip-icon svg { width: 100%; height: 100%; display: block; }
+.ability-chip.rare .chip-icon { color: #ffd166; }
+.ability-chip.epic .chip-icon { color: #d16bff; }
+
+/* In-game sidebar: unlocked abilities down the right edge. The double-id
+   selector outranks the generic `#hud > div` pill styling. */
+#hud > #hud-abilities {
+  position: absolute;
+  top: 50%;
+  right: 0.9rem;
+  transform: translateY(-50%);
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  padding: 0;
+  background: none;
+  border: none;
+  max-height: 80vh;
+  overflow: hidden;
+}
+.hud-ability {
+  position: relative;
+  width: 40px;
+  height: 40px;
+  padding: 6px;
+  color: var(--accent);
+  background: rgba(12, 9, 20, 0.65);
+  border: 1.5px solid rgba(138, 43, 226, 0.5);
+  border-radius: 9px;
+  backdrop-filter: blur(2px);
+  pointer-events: auto; /* hover tooltip despite the HUD being pass-through */
+}
+.hud-ability svg { width: 100%; height: 100%; display: block; }
+.hud-ability.rare { border-color: rgba(255, 209, 102, 0.75); color: #ffd166; box-shadow: 0 0 8px rgba(255, 209, 102, 0.25); }
+.hud-ability.epic { border-color: rgba(209, 107, 255, 0.8); color: #d16bff; box-shadow: 0 0 8px rgba(209, 107, 255, 0.3); }
+.hud-ability .stack {
+  position: absolute;
+  right: -5px;
+  bottom: -5px;
+  min-width: 16px;
+  padding: 1px 4px;
+  font-size: 0.58rem;
+  font-weight: 800;
+  text-align: center;
+  color: #fff;
+  background: var(--accent);
+  border-radius: 999px;
+  border: 1px solid #0b0b10;
+}
+.hud-ability.rare .stack { background: #b8860b; }
+.hud-ability.epic .stack { background: #9333cc; }
 
 /* Level-up cards ---------------------------------------------------- */
 #levelup-cards { display: flex; gap: 1rem; }
@@ -309,11 +514,23 @@ html, body {
   background: rgba(5, 3, 10, 0.82);
   gap: 1.25rem;
 }
+.menu-panel { backdrop-filter: blur(3px); }
 .menu-panel h2 {
-  font-size: 1.8rem;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  color: var(--fg);
+  font-family: 'Grenze Gotisch', serif;
+  font-weight: 700;
+  font-size: 2.4rem;
+  letter-spacing: 0.08em;
+  color: #e9dccb;
+  text-shadow: 0 0 18px rgba(138, 43, 226, 0.5), 0 2px 3px rgba(0, 0, 0, 0.8);
+}
+/* Rune-diamond divider under panel titles */
+.menu-panel h2::after {
+  content: '';
+  display: block;
+  width: 180px;
+  height: 1px;
+  margin: 0.4rem auto 0;
+  background: linear-gradient(90deg, transparent, #8a2be2, transparent);
 }
 
 #abilities-cards {
@@ -409,6 +626,49 @@ html, body {
 #btn-restart { background: #2a2a3a; }
 #btn-restart:hover:not(:disabled) { background: #3a3a52; }
 
+#btn-exit { background: transparent; border: 1px solid rgba(255, 255, 255, 0.25); }
+#btn-exit:hover:not(:disabled) { background: rgba(255, 255, 255, 0.08); }
+
+/* Pause menu ---------------------------------------------------------- */
+#screen-pause h2 {
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+#pause-stats {
+  font-size: 1rem;
+  line-height: 1.7;
+  text-align: center;
+  opacity: 0.9;
+  letter-spacing: 0.02em;
+}
+#pause-stats strong { color: var(--accent); }
+
+#pause-abilities {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.5rem;
+  max-width: min(90vw, 640px);
+}
+.ability-chip {
+  padding: 0.35rem 0.8rem;
+  font-size: 0.85rem;
+  background: #16161f;
+  border: 1.5px solid var(--accent);
+  border-radius: 999px;
+  cursor: help; /* hover for the full description */
+}
+.ability-chip.rare { border-color: #ffd166; color: #ffd166; }
+.ability-chip.epic { border-color: #d16bff; color: #d16bff; }
+.pause-empty { opacity: 0.55; font-style: italic; }
+
+.pause-hint {
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  opacity: 0.45;
+}
+
 /* Leaderboard list — class-based: shared by the game-over screen and the
    start-menu Leaderboard panel. */
 .leaderboard-list {
@@ -462,3 +722,12 @@ html, body {
 
 /* Menu leaderboard gets more vertical room than the game-over one */
 #menu-leaderboard-list { max-height: 55vh; }
+
+/* Reduced motion: kill the theatre, keep the layout */
+@media (prefers-reduced-motion: reduce) {
+  .ember, .ring-outer, .ring-inner, .demon-eye,
+  .game-title, .title-block, .title-block::after,
+  .main-menu .menu-btn, .card.rare, .card.epic {
+    animation: none !important;
+  }
+}

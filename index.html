@@ -3,10 +3,10 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Whiff Demon</title>
+  <title>Ashes and Demons</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Luckiest+Guy&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Grenze+Gotisch:wght@500;700&family=Luckiest+Guy&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
@@ -29,6 +29,8 @@
       <div id="hud-wave"></div>
       <div id="hud-timer"></div>
       <div id="hud-kills"></div>
+      <!-- Unlocked-abilities sidebar (icons + stack counts, right edge) -->
+      <div id="hud-abilities"></div>
     </div>
 
     <!-- Start / title screen -->
@@ -51,8 +53,34 @@
         <span class="ember" style="--x: 58%; --s: .5;  --d: 2.9s; --dur: 6.6s;"></span>
       </div>
 
+      <!-- Summoning ring: two counter-rotating rune rings behind the title,
+           the same ceremonial circles baked into the arena floor. -->
+      <svg class="summon-ring" viewBox="0 0 200 200" aria-hidden="true">
+        <g class="ring-outer">
+          <circle cx="100" cy="100" r="96" fill="none" stroke="currentColor"
+                  stroke-width="1.6" stroke-dasharray="7 4 2 4"/>
+        </g>
+        <g class="ring-inner">
+          <circle cx="100" cy="100" r="74" fill="none" stroke="currentColor" stroke-width="1"/>
+          <path fill="none" stroke="currentColor" stroke-width="1.4" d="
+            M196 100 L174 100 M167.9 167.9 L152.3 152.3 M100 196 L100 174
+            M32.1 167.9 L47.7 152.3 M4 100 L26 100 M32.1 32.1 L47.7 47.7
+            M100 4 L100 26 M167.9 32.1 L152.3 47.7"/>
+        </g>
+      </svg>
+
+      <!-- The demon itself: horned silhouette backlit by the lava, eyes smolder -->
+      <svg class="demon" viewBox="0 0 600 300" aria-hidden="true">
+        <path class="demon-body" d="
+          M140 300 C160 170 240 110 300 110 C360 110 440 170 460 300 Z
+          M205 165 C150 120 130 55 150 8 C160 78 190 110 238 133 Z
+          M395 165 C450 120 470 55 450 8 C440 78 410 110 362 133 Z"/>
+        <path class="demon-eye" d="M242 208 L288 190 L282 207 L248 218 Z"/>
+        <path class="demon-eye" d="M358 208 L312 190 L318 207 L352 218 Z"/>
+      </svg>
+
       <div class="title-block">
-        <h1 class="game-title">Whiff Demon</h1>
+        <h1 class="game-title">Ashes and Demons</h1>
         <p class="game-tagline">How did that not land!?</p>
       </div>
 
@@ -60,9 +88,9 @@
         <button id="btn-start" class="menu-btn primary">Start Game</button>
         <button id="btn-abilities" class="menu-btn">Abilities</button>
         <button id="btn-leaderboard" class="menu-btn">Leaderboard</button>
+        <button id="btn-settings" class="menu-btn">Settings</button>
         <!--OTHER BUTTONS TO BE ADDED-->
-        <!--  <button id="btn-options" class="menu-btn">Options</button>
-        <button id="btn-quit" class="menu-btn">Quit</button> -->
+        <!--  <button id="btn-quit" class="menu-btn">Quit</button> -->
       </nav>
 
       <footer class="credits">Developed by C&J</footer>
@@ -82,6 +110,15 @@
       <button id="btn-leaderboard-back" class="menu-btn">Back</button>
     </div>
 
+    <!-- Settings (opened from the start menu; overlays it) -->
+    <div id="screen-settings" class="screen menu-panel hidden">
+      <h2>Settings</h2>
+      <p>Movement controls</p>
+      <button id="btn-controls-kb" class="menu-btn">Keyboard (WASD / Arrows)</button>
+      <button id="btn-controls-mouse" class="menu-btn">Mouse (follow cursor)</button>
+      <button id="btn-settings-back" class="menu-btn">Back</button>
+    </div>
+
     <!-- Level-up modal: 3 upgrade cards, pauses the game -->
     <div id="screen-levelup" class="screen hidden">
       <h2>Choose an upgrade</h2>
@@ -97,11 +134,16 @@
       <button id="btn-save-score">Save Score</button>
       <ol id="leaderboard-list" class="leaderboard-list"></ol>
       <button id="btn-restart">Play Again</button>
+      <button id="btn-exit">Exit to Menu</button>
     </div>
 
-    <!-- Pause overlay -->
+    <!-- Pause overlay (Esc) — run stats + acquired abilities -->
     <div id="screen-pause" class="screen hidden">
       <h2>Paused</h2>
+      <div id="pause-stats"></div>
+      <div id="pause-abilities"></div>
+      <button id="btn-pause-quit" class="menu-btn">Quit to Menu</button>
+      <p class="pause-hint">Hover an ability for details · Esc to resume</p>
     </div>
   </div>
 

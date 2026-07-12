@@ -109,6 +109,76 @@ export class Spawner {
   }
 }
 
+// Soft-body separation (Vampire-Survivors style) ----------------------
+// Enemies shove each other out of overlap so crowds form pressing rings
+// instead of stacking into a single blob. Coarse spatial hash keeps it
+// ~O(n); each pair resolves once, split by mass (radius²) so brutes
+// plow through swarms and the dragon plows through everything.
+export const Separation = {
+  CELL: 80, // must exceed the largest radius-sum in play (boss+brute ≈ 61)
+
+  resolve(world) {
+    const es = world.enemies;
+    if (es.length < 2) return;
+
+    // Bin every enemy into a coarse grid keyed by cell coordinates.
+    const grid = new Map();
+    for (let i = 0; i < es.length; i++) {
+      const e = es[i];
+      if (!e.alive) continue;
+      e._si = i; // enumeration order: lets each pair resolve exactly once
+      const k = ((e.x / this.CELL) | 0) * 100003 + ((e.y / this.CELL) | 0);
+      let arr = grid.get(k);
+      if (!arr) grid.set(k, (arr = []));
+      arr.push(e);
+    }
+
+    for (const e of es) {
+      if (!e.alive) continue;
+      const cx = (e.x / this.CELL) | 0;
+      const cy = (e.y / this.CELL) | 0;
+      for (let ox = -1; ox <= 1; ox++) {
+        for (let oy = -1; oy <= 1; oy++) {
+          const arr = grid.get((cx + ox) * 100003 + (cy + oy));
+          if (!arr) continue;
+          for (const o of arr) {
+            if (!o.alive || o._si <= e._si) continue; // each pair once
+
+            let dx = o.x - e.x;
+            let dy = o.y - e.y;
+            // 0.9: bodies may brush slightly — full radius looks too stiff.
+            const rr = (e.radius + o.radius) * 0.9;
+            let d2 = dx * dx + dy * dy;
+            if (d2 >= rr * rr) continue;
+            if (d2 === 0) { // perfectly stacked: pick a random axis
+              dx = Math.random() - 0.5;
+              dy = Math.random() - 0.5;
+              d2 = dx * dx + dy * dy;
+            }
+
+            const d = Math.sqrt(d2);
+            const nx = dx / d, ny = dy / d;
+            // Resolve a fraction of the overlap per frame — fully rigid
+            // resolution makes dense crowds jitter.
+            const push = (rr - d) * 0.6;
+            const me = e.radius * e.radius;
+            const mo = o.radius * o.radius;
+            const total = me + mo;
+            if (!e.isBoss) {
+              e.x -= nx * push * (mo / total);
+              e.y -= ny * push * (mo / total);
+            }
+            if (!o.isBoss) {
+              o.x += nx * push * (me / total);
+              o.y += ny * push * (me / total);
+            }
+          }
+        }
+      }
+    }
+  },
+};
+
 // Combat: collision + damage resolution ------------------------------
 function hits(a, b) {
   const rr = a.radius + b.radius;
@@ -261,6 +331,10 @@ export const Progression = {
   },
   apply(player, upgradeId) {
     const up = UPGRADES.find((u) => u.id === upgradeId);
-    if (up) up.effect(player);
+    if (up) {
+      up.effect(player);
+      // Remember the pick so the pause menu can list the build.
+      player.acquired[upgradeId] = (player.acquired[upgradeId] || 0) + 1;
+    }
   },
 };

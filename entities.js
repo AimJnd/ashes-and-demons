@@ -181,24 +181,36 @@ export class Enemy extends Entity {
 
   // Brute: horned crimson bruiser — gorilla stance with ground fists,
   // bone horns, under-bite fangs and a molten crack down the chest.
+  // Knuckle-walks: fists step alternately while the body lumbers.
   _renderBrute(ctx, s, t) {
     const r = this.radius;
     const w = r * 2.5, h = r * 2.4;
-    const breathe = Math.sin(t * 1.8) * r * 0.04;
-    const top = s.y - h - breathe;
+    const dir = this.flip ? -1 : 1;
 
-    this._shadow(ctx, s, r * 1.3);
+    // Gait clock: opposite-phase fist steps + a heavy body bounce.
+    const gait = t * 5;
+    const stepL = Math.sin(gait);
+    const stepR = -stepL;
+    const liftL = Math.max(0, stepL) * r * 0.20;   // fist lifts off ground
+    const liftR = Math.max(0, stepR) * r * 0.20;
+    const leadL = dir * stepL * r * 0.16;          // and swings forward
+    const leadR = dir * stepR * r * 0.16;
+    const bounce = Math.abs(Math.sin(gait)) * r * 0.06;
+    const breathe = Math.sin(t * 1.8) * r * 0.04;
+    const top = s.y - h - breathe - bounce;
+
+    this._shadow(ctx, s, r * (1.3 - bounce * 0.01));
 
     const p = new Path2D();
-    p.moveTo(s.x - w * 0.46, s.y);
+    p.moveTo(s.x - w * 0.46 + leadL, s.y - liftL);
     p.quadraticCurveTo(s.x - w * 0.56, s.y - h * 0.45, s.x - w * 0.42, top + h * 0.22);
     p.quadraticCurveTo(s.x - w * 0.30, top - r * 0.10, s.x, top + r * 0.06);
     p.quadraticCurveTo(s.x + w * 0.30, top - r * 0.10, s.x + w * 0.42, top + h * 0.22);
-    p.quadraticCurveTo(s.x + w * 0.56, s.y - h * 0.45, s.x + w * 0.46, s.y);
-    p.lineTo(s.x + w * 0.24, s.y);
+    p.quadraticCurveTo(s.x + w * 0.56, s.y - h * 0.45, s.x + w * 0.46 + leadR, s.y - liftR);
+    p.lineTo(s.x + w * 0.24 + leadR, s.y - liftR);
     p.quadraticCurveTo(s.x + w * 0.30, s.y - h * 0.34, s.x + w * 0.16, s.y - h * 0.30);
     p.quadraticCurveTo(s.x, s.y - h * 0.20, s.x - w * 0.16, s.y - h * 0.30);
-    p.quadraticCurveTo(s.x - w * 0.30, s.y - h * 0.34, s.x - w * 0.24, s.y);
+    p.quadraticCurveTo(s.x - w * 0.30, s.y - h * 0.34, s.x - w * 0.24 + leadL, s.y - liftL);
     p.closePath();
     ctx.fillStyle = this._vgrad(ctx, s.x, top, s.y, '#4a1c20', '#200d12');
     ctx.fill(p);
@@ -206,11 +218,11 @@ export class Enemy extends Entity {
     ctx.lineWidth = 2;
     ctx.stroke(p);
 
-    // Knuckle pads on the fists
-    for (const dx of [-w * 0.35, w * 0.35]) {
+    // Knuckle pads ride their stepping fists
+    for (const [dx, lead, lift] of [[-w * 0.35, leadL, liftL], [w * 0.35, leadR, liftR]]) {
       ctx.fillStyle = '#57262b';
       ctx.beginPath();
-      ctx.ellipse(s.x + dx, s.y - r * 0.18, r * 0.30, r * 0.24, 0, 0, Math.PI * 2);
+      ctx.ellipse(s.x + dx + lead, s.y - r * 0.18 - lift, r * 0.30, r * 0.24, 0, 0, Math.PI * 2);
       ctx.fill();
       ctx.strokeStyle = 'rgba(220, 80, 60, 0.5)';
       ctx.lineWidth = 1.5;
@@ -462,8 +474,8 @@ export class Projectile extends Entity {
     this.life -= dt;
     if (this.life <= 0) this.alive = false;
   }
-  // Crimson talisman shard: an elongated diamond aligned to its velocity
-  // with a fading trail — reads as directed intent, not a floating dot.
+  // Void bolt from the crescent wand: an elongated diamond aligned to its
+  // velocity with a fading trail — reads as directed intent, not a dot.
   render(ctx, camera) {
     const s = camera.toScreen(this.x, this.y);
     const ang = Math.atan2(this.vy, this.vx);
@@ -471,7 +483,7 @@ export class Projectile extends Entity {
     ctx.translate(s.x, s.y);
     ctx.rotate(ang);
     // Trail
-    ctx.strokeStyle = 'rgba(255, 59, 92, 0.35)';
+    ctx.strokeStyle = 'rgba(80, 170, 255, 0.4)';
     ctx.lineWidth = 3;
     ctx.lineCap = 'round';
     ctx.beginPath();
@@ -479,8 +491,8 @@ export class Projectile extends Entity {
     ctx.lineTo(-6, 0);
     ctx.stroke();
     // Shard body
-    ctx.fillStyle = '#fff0f3';
-    ctx.shadowColor = '#ff3b5c';
+    ctx.fillStyle = '#eaf7ff';
+    ctx.shadowColor = '#3fc8ff';
     ctx.shadowBlur = 10;
     ctx.beginPath();
     ctx.moveTo(9, 0);
@@ -490,6 +502,80 @@ export class Projectile extends Entity {
     ctx.closePath();
     ctx.fill();
     ctx.restore();
+  }
+}
+
+// Crimson Boomerang (altar relic) -------------------------------------
+// Shared painter: the projectile and the relic-on-the-altar draw the
+// same spinning crimson disc, so the pickup telegraphs the weapon.
+export function drawBoomerang(ctx, x, y, scale, spin) {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(spin);
+  ctx.shadowColor = '#ff2f4e';
+  ctx.shadowBlur = 14 * scale;
+  // Ring body
+  ctx.strokeStyle = '#c11733';
+  ctx.lineWidth = 5 * scale;
+  ctx.beginPath();
+  ctx.arc(0, 0, 10 * scale, 0, Math.PI * 2);
+  ctx.stroke();
+  // Three swept blades around the ring
+  ctx.fillStyle = '#ff3b5c';
+  for (let i = 0; i < 3; i++) {
+    ctx.rotate((Math.PI * 2) / 3);
+    ctx.beginPath();
+    ctx.moveTo(9 * scale, -2 * scale);
+    ctx.quadraticCurveTo(17 * scale, -7 * scale, 20 * scale, 1 * scale);
+    ctx.quadraticCurveTo(14 * scale, 1.5 * scale, 9 * scale, 3.5 * scale);
+    ctx.closePath();
+    ctx.fill();
+  }
+  // Hot core
+  ctx.fillStyle = '#ffd9de';
+  ctx.beginPath();
+  ctx.arc(0, 0, 3.2 * scale, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
+// Flies out `range`, then homes back to the player; pierces everything.
+// Extends Projectile so Combat's existing hit/pierce loop handles damage
+// (pierce = Infinity never exhausts; _hit dedupes per pass).
+export class Boomerang extends Projectile {
+  constructor(player, angle) {
+    const cfg = CONFIG.weapons.boomerang;
+    super(player.x, player.y,
+          Math.cos(angle) * cfg.speed, Math.sin(angle) * cfg.speed,
+          player.stats.damage * cfg.damageMul, Infinity);
+    this.radius = cfg.radius;
+    this.player = player;
+    this.life = 99;                      // despawns on catch, not by timer
+    this._outT = cfg.range / cfg.speed;  // seconds of outbound flight
+    this.spin = 0;
+  }
+
+  update(dt) {
+    if (this._outT > 0) {
+      this._outT -= dt;
+      if (this._outT <= 0) this._hit.clear(); // return pass hits again
+    } else {
+      const dx = this.player.x - this.x;
+      const dy = this.player.y - this.y;
+      const d = Math.hypot(dx, dy);
+      if (d < this.player.radius + 8) { this.alive = false; return; } // caught
+      const sp = CONFIG.weapons.boomerang.speed;
+      this.vx = (dx / d) * sp;
+      this.vy = (dy / d) * sp;
+    }
+    this.x += this.vx * dt;
+    this.y += this.vy * dt;
+    this.spin += dt * 14;
+  }
+
+  render(ctx, camera) {
+    const s = camera.toScreen(this.x, this.y);
+    drawBoomerang(ctx, s.x, s.y, 1, this.spin);
   }
 }
 

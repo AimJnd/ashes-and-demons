@@ -13,13 +13,58 @@
     - Pickup collection radius.
 */
 
-import { CONFIG } from './config.js';
-import { Entity } from './entities.js';
-import { RangedWeapon, createWeapon, NovaPassive } from './weapons.js';
+import { CONFIG, Settings, TILE, isTrapTile } from './config.js';
+import { Entity, FloatingText } from './entities.js';
+import { RangedWeapon, createWeapon, NovaPassive, BoomerangPassive } from './weapons.js';
 
 // Body radius used for drawing/collision (pickupRadius is much larger and
 // only governs gem attraction, so we keep a separate visual radius).
 const PLAYER_RADIUS = 16;
+
+// Pixel sprite (matches "player design.jpg", which is a pixel-art sheet):
+// 12x19 cells drawn facing right, mirrored via `flip`. '.' = transparent.
+const PAL = {
+  H: '#1b2233', // hair (black-navy)
+  S: '#e9ddd2', // skin
+  E: '#6fe0ff', // eyes / amulet gem (redrawn with a glow pass)
+  M: '#223046', // face mask
+  C: '#262f4a', // coat
+  L: '#39486d', // sleeve highlight
+  B: '#3f6fd0', // belt
+  K: '#141b2e', // cape (trails behind)
+  P: '#1a2135', // pants
+  O: '#0d1320', // boots
+};
+const SPRITE_TORSO = [
+  '....HHHH....',
+  '..HHHHHHHH..',
+  '..HHHHHHHH..',
+  '.H.HHHHHH...',
+  '...HSSSSH...',
+  '...SESSES...',
+  '...MMMMMM...',
+  '....MMMM....',
+  '.K.CCECCC...',
+  '.KKCCCCCCC..',
+  'KKLCCCCCCL..',
+  'KKLCCBBCCL..',
+  '.KKCCCCCC...',
+  '.KCCCCCCC...',
+];
+const LEGS_STAND = [
+  '...PP..PP...',
+  '...PP..PP...',
+  '...PP..PP...',
+  '...OO..OO...',
+  '..OOO..OOO..',
+];
+const LEGS_STEP = [
+  '...PP..PP...',
+  '..PP....PP..',
+  '..PP....PP..',
+  '..OO....OO..',
+  '.OOO....OOO.',
+];
 
 export class Player extends Entity {
   constructor(x, y) {
@@ -32,19 +77,28 @@ export class Player extends Entity {
     this.xpToNext = 0;       // set by progression on init
     this.weapon = new RangedWeapon(); // game starts with the og shooting
     this.nova = new NovaPassive();    // dormant until the Holy Nova upgrade
+    this.boomerang = new BoomerangPassive(); // dormant until the altar relic
+    this.acquired = {};      // upgradeId -> times picked (pause menu reads this)
     this._hurtCd = 0;        // i-frame timer after taking contact damage
     this.facing = 0;         // radians, last movement direction
     this.flip = false;       // billboard faces left when true
   }
 
   update(dt, input, world) {
-    // --- Movement: read queryable key state, build a direction vector ----
+    // --- Movement: direction vector from keys OR mouse (Settings) --------
     let dx = 0, dy = 0;
-    const k = input.keys;
-    if (k.has('KeyW') || k.has('ArrowUp'))    dy -= 1;
-    if (k.has('KeyS') || k.has('ArrowDown'))  dy += 1;
-    if (k.has('KeyA') || k.has('ArrowLeft'))  dx -= 1;
-    if (k.has('KeyD') || k.has('ArrowRight')) dx += 1;
+    if (Settings.controls === 'mouse') {
+      // Walk toward the cursor; deadzone so we don't jitter on arrival.
+      const mx = input.mouseWorldX - this.x;
+      const my = input.mouseWorldY - this.y;
+      if (Math.hypot(mx, my) > this.radius * 0.5) { dx = mx; dy = my; }
+    } else {
+      const k = input.keys;
+      if (k.has('KeyW') || k.has('ArrowUp'))    dy -= 1;
+      if (k.has('KeyS') || k.has('ArrowDown'))  dy += 1;
+      if (k.has('KeyA') || k.has('ArrowLeft'))  dx -= 1;
+      if (k.has('KeyD') || k.has('ArrowRight')) dx += 1;
+    }
 
     this.moving = (dx !== 0 || dy !== 0); // drives the walk-bob animation
     if (dx !== 0 || dy !== 0) {
@@ -66,9 +120,32 @@ export class Player extends Entity {
     // Tick down the post-hit invulnerability window.
     if (this._hurtCd > 0) this._hurtCd -= dt;
 
+    // Spike traps: linger past the grace period and they bite, then keep
+    // ticking until you step off. Separate from _hurtCd — traps punish
+    // camping, so enemy-hit i-frames shouldn't mask them.
+    const trap = CONFIG.trap;
+    if (isTrapTile(Math.floor(this.x / TILE), Math.floor(this.y / TILE))) {
+      this._trapT = (this._trapT || 0) + dt;
+      if (this._trapT >= trap.grace) {
+        this._trapTick = (this._trapTick ?? 0) - dt;
+        if (this._trapTick <= 0) {
+          this.takeDamage(trap.damage);
+          world.floaters?.push(
+            new FloatingText(this.x, this.y - this.radius * 1.6,
+              trap.damage, { color: '#c9b8ff' })
+          );
+          this._trapTick = trap.interval;
+        }
+      }
+    } else {
+      this._trapT = 0;
+      this._trapTick = 0;
+    }
+
     // Attack: fully owned by the equipped weapon (weapons.js).
     this.weapon.update(dt, this, world);
     this.nova.update(dt, this, world); // epic passive (no-op until unlocked)
+    this.boomerang.update(dt, this, world); // altar relic (no-op until claimed)
     // (leveling is owned by systems.js, not here)
   }
 
@@ -126,163 +203,174 @@ export class Player extends Entity {
       ctx.restore();
     }
 
-    // --- The exorcist: fitted coat with a cinched waist and flaring
-    // --- skirt, swept-back pale hair, ribbon scarf, glowing amulet.
-    // --- (Design iterated against rendered previews.)
+    // --- Kaelen Thorne (see "player design.jpg"): pixel-sprite humanoid —
+    // --- spiky hair, glowing eyes over a mask, coat, cape, belt, two legs.
     const t = performance.now() / 1000;
     const dir = this.flip ? -1 : 1;
     const bob = this.moving ? Math.sin(t * 9) * 1.8 : Math.sin(t * 2) * 0.8;
-    const sway = this.moving ? Math.sin(t * 9 + Math.PI / 2) * 1.4 : 0;
-    const H = r * 2.7;
 
-    // Ground shadow
+    // Ground shadow (stays planted — drawn before the walk lean)
     ctx.fillStyle = 'rgba(0, 0, 0, 0.35)';
     ctx.beginPath();
     ctx.ellipse(s.x, s.y, r * 0.95, r * 0.38, 0, 0, Math.PI * 2);
     ctx.fill();
 
-    const topY = s.y - H + bob;
-    const headR = r * 0.5;
-    const headY = topY + headR + r * 0.30;
-    const neckY = headY + headR * 0.95;
-    const shW = r * 1.15;
-
-    const vgrad = (y0, y1, c0, c1) => {
-      const g = ctx.createLinearGradient(s.x, y0, s.x, y1);
-      g.addColorStop(0, c0);
-      g.addColorStop(1, c1);
-      return g;
-    };
-
-    // Ribbon scarf: tapered filled shape with a forked, fluttering tail.
-    const flut = Math.sin(t * 6) * 2.5 + (this.moving ? Math.sin(t * 13) * 1.8 : 0);
-    const s0x = s.x - dir * r * 0.2, s0y = neckY - r * 0.05;
-    const endx = s.x - dir * r * 2.0, endy = neckY + r * 0.15 + flut;
-    const scarf = new Path2D();
-    scarf.moveTo(s0x, s0y - r * 0.18);
-    scarf.quadraticCurveTo(s.x - dir * r * 1.05, s0y - r * 0.1 + flut * 0.35, endx, endy - r * 0.05);
-    scarf.lineTo(endx + dir * r * 0.5, endy + r * 0.16);
-    scarf.lineTo(endx - dir * r * 0.12, endy + r * 0.42 + flut * 0.2);
-    scarf.quadraticCurveTo(s.x - dir * r * 1.0, s0y + r * 0.42 + flut * 0.3, s0x, s0y + r * 0.24);
-    scarf.closePath();
-    ctx.fillStyle = '#b32738';
-    ctx.fill(scarf);
-    ctx.strokeStyle = '#6e1220';
-    ctx.lineWidth = 1.2;
-    ctx.stroke(scarf);
-
-    // Coat: fitted shoulders, cinched waist, long flaring notched skirt.
-    const coat = new Path2D();
-    coat.moveTo(s.x - shW * 0.52, neckY);
-    coat.quadraticCurveTo(s.x - shW * 0.60, neckY + r * 0.85,
-                          s.x - shW * 0.42, s.y - H * 0.42);
-    coat.quadraticCurveTo(s.x - shW * 0.95 - sway, s.y - r * 0.55,
-                          s.x - shW * 1.05 - sway, s.y - 2);
-    coat.lineTo(s.x - shW * 0.30, s.y - r * 0.50);
-    coat.lineTo(s.x + shW * 0.05, s.y - 2);
-    coat.lineTo(s.x + shW * 0.45, s.y - r * 0.35);
-    coat.lineTo(s.x + shW * 0.90 + sway, s.y - 2);
-    coat.quadraticCurveTo(s.x + shW * 0.70, s.y - H * 0.40,
-                          s.x + shW * 0.44, s.y - H * 0.62);
-    coat.quadraticCurveTo(s.x + shW * 0.58, neckY + r * 0.6,
-                          s.x + shW * 0.52, neckY);
-    coat.closePath();
-    ctx.fillStyle = vgrad(topY, s.y, '#2e2a3d', '#161320');
-    ctx.fill(coat);
-    ctx.strokeStyle = 'rgba(214, 206, 236, 0.9)';
-    ctx.lineWidth = 1.7;
-    ctx.stroke(coat);
-
-    // Cel shadow on the off side + a hint of the facing-side sleeve.
+    // Walk cycle: the whole body leans into the stride and counter-wobbles
+    // with each step. Pivot at the feet so ground contact stays planted.
+    const lean = this.moving ? dir * 0.05 + Math.sin(t * 9) * 0.035 : 0;
     ctx.save();
-    ctx.clip(coat);
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.26)';
-    ctx.fillRect(s.x - dir * shW * 2, topY, shW * 2, H + 4);
-    ctx.strokeStyle = 'rgba(214, 206, 236, 0.35)';
-    ctx.lineWidth = 1.2;
-    ctx.beginPath();
-    ctx.moveTo(s.x + dir * shW * 0.40, neckY + r * 0.35);
-    ctx.quadraticCurveTo(s.x + dir * shW * 0.52, s.y - H * 0.45,
-                         s.x + dir * shW * 0.34, s.y - H * 0.22);
-    ctx.stroke();
-    ctx.restore();
-
-    // Belt sash at the waist
-    ctx.strokeStyle = '#8a2be2';
-    ctx.lineWidth = 2.2;
-    ctx.beginPath();
-    ctx.moveTo(s.x - shW * 0.42, s.y - H * 0.44);
-    ctx.quadraticCurveTo(s.x, s.y - H * 0.38, s.x + shW * 0.44, s.y - H * 0.46);
-    ctx.stroke();
-
-    // Amulet on a cord
-    ctx.strokeStyle = 'rgba(214, 206, 236, 0.5)';
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.moveTo(s.x - r * 0.18, neckY + r * 0.06);
-    ctx.lineTo(s.x, neckY + r * 0.48);
-    ctx.lineTo(s.x + r * 0.18, neckY + r * 0.06);
-    ctx.stroke();
-    ctx.save();
-    ctx.fillStyle = '#a45cff';
-    ctx.shadowColor = '#a45cff';
-    ctx.shadowBlur = 8 + Math.sin(t * 4) * 3;
-    ctx.beginPath();
-    ctx.arc(s.x, neckY + r * 0.55, 2.6, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.restore();
-
-    // Scarf knot at the neck
-    ctx.fillStyle = '#c9314a';
-    ctx.beginPath();
-    ctx.ellipse(s.x, neckY - r * 0.02, r * 0.42, r * 0.2, 0, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.strokeStyle = '#6e1220';
-    ctx.lineWidth = 1;
-    ctx.stroke();
-
-    // Head
-    ctx.fillStyle = '#efe9f0';
-    ctx.beginPath();
-    ctx.arc(s.x, headY, headR, 0, Math.PI * 2);
-    ctx.fill();
-
-    // Hair: swept-back sharp spikes, hairline high so the face reads.
-    const hair = new Path2D();
-    hair.moveTo(s.x + dir * headR * 0.98, headY - headR * 0.30);
-    hair.quadraticCurveTo(s.x + dir * headR * 0.30, headY - headR * 1.10,
-                          s.x - dir * headR * 0.20, headY - headR * 0.95);
-    hair.lineTo(s.x - dir * headR * 0.42, headY - headR * 1.45);
-    hair.lineTo(s.x - dir * headR * 0.78, headY - headR * 0.70);
-    hair.lineTo(s.x - dir * headR * 1.45, headY - headR * 0.92);
-    hair.lineTo(s.x - dir * headR * 1.05, headY - headR * 0.22);
-    hair.lineTo(s.x - dir * headR * 1.72, headY - headR * 0.02);
-    hair.lineTo(s.x - dir * headR * 0.92, headY + headR * 0.38);
-    hair.quadraticCurveTo(s.x - dir * headR * 0.35, headY - headR * 0.28,
-                          s.x + dir * headR * 0.98, headY - headR * 0.30);
-    hair.closePath();
-    ctx.fillStyle = '#d6cfec';
-    ctx.fill(hair);
-    ctx.strokeStyle = '#8f86b8';
-    ctx.lineWidth = 1.2;
-    ctx.stroke(hair);
-
-    // Eyes: sharp ticks with thin slanted brows above.
-    ctx.strokeStyle = '#2f2b3e';
-    ctx.lineCap = 'round';
-    const eyeY = headY + headR * 0.14;
-    for (const d of [-1, 1]) {
-      const ex = s.x + d * headR * 0.34 + dir * headR * 0.14;
-      ctx.lineWidth = 1.6;
-      ctx.beginPath();
-      ctx.moveTo(ex, eyeY - 1.4);
-      ctx.lineTo(ex + d * 0.6, eyeY + 1.2);
-      ctx.stroke();
-      ctx.lineWidth = 1.1;
-      ctx.beginPath();
-      ctx.moveTo(ex - d * 1.8, eyeY - 3.4);
-      ctx.lineTo(ex + d * 1.4, eyeY - 4.4);
-      ctx.stroke();
+    if (lean) {
+      ctx.translate(s.x, s.y);
+      ctx.rotate(lean);
+      ctx.translate(-s.x, -s.y);
     }
+
+    // Build this frame's cell grid: torso + whichever leg pose the stride
+    // calls for (two-frame walk cycle, toggled by the step sine).
+    const stepping = this.moving && Math.sin(t * 9) > 0;
+    const rows = [...SPRITE_TORSO, ...(stepping ? LEGS_STEP : LEGS_STAND)];
+    const cols = rows[0].length;
+    const p = (r * 2.9) / rows.length;      // cell size; feet land on s.y
+    const x0 = s.x - (cols * p) / 2;
+    const y0 = s.y - rows.length * p + bob * 0.6;
+
+    // Void aura: a dark body-shaped blob with a blue glow shadow, drawn
+    // under the sprite so the silhouette rims in blue flame.
+    ctx.save();
+    ctx.shadowColor = 'rgba(80, 150, 255, 0.8)';
+    ctx.shadowBlur = 13 + Math.sin(t * 3) * 3;
+    ctx.fillStyle = '#131a2c';
+    ctx.beginPath();
+    ctx.ellipse(s.x, y0 + rows.length * p * 0.52,
+                cols * p * 0.34, rows.length * p * 0.5, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+
+    // Sprite pass. Cells overlap by a hair so no seams show between rects.
+    for (let ry = 0; ry < rows.length; ry++) {
+      const row = rows[ry];
+      for (let cx = 0; cx < cols; cx++) {
+        const ch = row[this.flip ? cols - 1 - cx : cx];
+        if (ch === '.') continue;
+        ctx.fillStyle = PAL[ch];
+        ctx.fillRect(x0 + cx * p, y0 + ry * p, p + 0.4, p + 0.4);
+      }
+    }
+
+    // Glow pass: eyes + amulet gem burn ice-blue over the flat pixels.
+    ctx.save();
+    ctx.fillStyle = '#a5ecff';
+    ctx.shadowColor = '#3fc8ff';
+    ctx.shadowBlur = 3.5 + Math.sin(t * 4) * 1.5;
+    for (let ry = 0; ry < rows.length; ry++) {
+      const row = rows[ry];
+      for (let cx = 0; cx < cols; cx++) {
+        if (row[this.flip ? cols - 1 - cx : cx] !== 'E') continue;
+        ctx.fillRect(x0 + cx * p, y0 + ry * p, p + 0.4, p + 0.4);
+      }
+    }
+    ctx.restore();
+
+    // Void wand — ranged mode only; the Spirit Blade swap goes bare-handed
+    // (its presence on screen is the slash VFX itself).
+    if (this.weapon.id === 'ranged') {
+      const hx = s.x + dir * p * 4.2;       // hand at the sleeve edge
+      const hy = y0 + p * 11;               // belt-row height
+      const tx = hx + dir * r * 0.75;       // crescent head, up-forward
+      const ty = hy - r * 1.15;
+      const bx = hx - dir * r * 0.28;       // shaft butt, down-behind
+      const by = hy + r * 0.42;
+      ctx.lineCap = 'round';
+      ctx.strokeStyle = '#232a3d';          // dark shaft…
+      ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.moveTo(bx, by); ctx.lineTo(tx, ty); ctx.stroke();
+      ctx.strokeStyle = 'rgba(130, 185, 255, 0.5)'; // …with a blue edge light
+      ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(bx, by); ctx.lineTo(tx, ty); ctx.stroke();
+      ctx.fillStyle = '#141b2b';
+      ctx.beginPath(); ctx.arc(hx, hy, r * 0.16, 0, Math.PI * 2); ctx.fill();
+      // Crescent head cradling a smoldering void orb (the Voidcaller motif).
+      ctx.save();
+      ctx.strokeStyle = '#9fd8ff';
+      ctx.shadowColor = '#3fc8ff';
+      ctx.shadowBlur = 9;
+      ctx.lineWidth = 2;
+      const aim = Math.atan2(ty - by, tx - bx); // crescent opens along the shaft
+      ctx.beginPath();
+      ctx.arc(tx, ty, r * 0.26, aim + 0.7, aim - 0.7);
+      ctx.stroke();
+      ctx.fillStyle = '#d9f4ff';
+      ctx.shadowBlur = 12 + Math.sin(t * 5) * 4;
+      ctx.beginPath(); ctx.arc(tx, ty, r * 0.1, 0, Math.PI * 2); ctx.fill();
+      ctx.restore();
+    } else {
+      // Voidcaller greatsword — melee mode. Dark tapered blade with a
+      // blue edge glow and the crescent guard from the design sheet.
+      const hx = s.x + dir * p * 4.2;       // same sleeve-edge hand
+      const hy = y0 + p * 11;
+      const a = Math.atan2(-1.55, dir);     // blade angle: up-forward
+      const ca = Math.cos(a), sa = Math.sin(a);
+      const gx = hx + ca * r * 0.28;        // guard sits just above the fist
+      const gy = hy + sa * r * 0.28;
+      const tipL = r * 2.0;                 // greatsword reach
+      const tx = hx + ca * tipL, ty = hy + sa * tipL;
+      const nx = -sa, ny = ca;              // blade width direction
+      const w = r * 0.24;
+
+      // Grip + glowing pommel behind the fist
+      ctx.lineCap = 'round';
+      ctx.strokeStyle = '#232a3d';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.moveTo(hx - ca * r * 0.32, hy - sa * r * 0.32);
+      ctx.lineTo(gx, gy);
+      ctx.stroke();
+      ctx.fillStyle = '#6fc4ff';
+      ctx.beginPath();
+      ctx.arc(hx - ca * r * 0.36, hy - sa * r * 0.36, 1.6, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Blade: dark steel, hazed in void-blue, bright edge line
+      const blade = new Path2D();
+      blade.moveTo(gx + nx * w, gy + ny * w);
+      blade.lineTo(tx, ty);
+      blade.lineTo(gx - nx * w, gy - ny * w);
+      blade.closePath();
+      ctx.save();
+      ctx.shadowColor = '#3fc8ff';
+      ctx.shadowBlur = 5;
+      ctx.fillStyle = '#1c2438';
+      ctx.fill(blade);
+      ctx.restore();
+      ctx.strokeStyle = 'rgba(159, 216, 255, 0.8)';
+      ctx.lineWidth = 1;
+      ctx.stroke(blade);
+      // Fuller: faint runic light down the blade's center
+      ctx.strokeStyle = 'rgba(130, 185, 255, 0.45)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(gx, gy);
+      ctx.lineTo(hx + ca * tipL * 0.8, hy + sa * tipL * 0.8);
+      ctx.stroke();
+
+      // Crescent-moon crossguard, opening toward the blade
+      ctx.save();
+      ctx.strokeStyle = '#9fd8ff';
+      ctx.shadowColor = '#3fc8ff';
+      ctx.shadowBlur = 8;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(gx, gy, r * 0.24, a + 0.8, a - 0.8);
+      ctx.stroke();
+      ctx.restore();
+
+      // Gloved fist over the grip
+      ctx.fillStyle = '#141b2b';
+      ctx.beginPath();
+      ctx.arc(hx, hy, r * 0.16, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    ctx.restore(); // end walk lean
   }
 }

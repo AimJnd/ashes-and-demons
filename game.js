@@ -4,10 +4,11 @@
   HTML loads; it imports everything else.
 */
 
-import { CONFIG } from './config.js';
+import { CONFIG, isTrapTile } from './config.js';
+import { FloatingText, drawBoomerang } from './entities.js';
 import { Player } from './player.js';
-import { Spawner, Combat, Progression } from './systems.js';
-import { Hud, Screens, LevelUp, Leaderboard, Menu } from './ui.js';
+import { Spawner, Combat, Progression, Separation } from './systems.js';
+import { Hud, Screens, LevelUp, Leaderboard, Menu, PauseMenu } from './ui.js';
 
 // Math helpers (merged from math.js) ---------------------------------
 export const Vec = {
@@ -44,7 +45,7 @@ const Camera = {
 
 // Arena: gothic stone floor, rune circles, ornate boundary ------------
 const Arena = {
-  TILE: 200, // big flagstones
+  TILE: 100, // big flagstones
 
   // Faint ceremonial circles baked into the floor (world coords).
   RUNES: [
@@ -53,64 +54,240 @@ const Arena = {
     { x: 2010, y: 1080, r: 190 },
   ],
 
+  // Spike-trap tile: dark pit with five spikes in a quincunx, matching
+  // the trap tile on the bg.webp sheet. Standing here hurts (player.js).
+  renderTrap(ctx, sx, sy) {
+    const T = this.TILE;
+    ctx.fillStyle = '#16101f'; // pit floor
+    ctx.fillRect(sx + 3, sy + 3, T - 6, T - 6);
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.5)'; // inner shadow rim
+    ctx.fillRect(sx + 3, sy + 3, T - 6, 6);
+    ctx.fillRect(sx + 3, sy + 3, 6, T - 6);
+    for (const [ox, oy] of [[0.5, 0.5], [0.27, 0.27], [0.73, 0.27], [0.27, 0.73], [0.73, 0.73]]) {
+      const cx = sx + ox * T, cy = sy + oy * T;
+      ctx.fillStyle = '#0b0812'; // socket hole
+      ctx.beginPath();
+      ctx.ellipse(cx, cy + 7, 8, 3.5, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#978ea6'; // spike
+      ctx.beginPath();
+      ctx.moveTo(cx - 6, cy + 7);
+      ctx.lineTo(cx, cy - 12);
+      ctx.lineTo(cx + 6, cy + 7);
+      ctx.closePath();
+      ctx.fill();
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.25)'; // edge catch-light
+      ctx.beginPath();
+      ctx.moveTo(cx, cy - 12);
+      ctx.lineTo(cx + 2.5, cy + 2);
+      ctx.lineTo(cx, cy + 4);
+      ctx.closePath();
+      ctx.fill();
+    }
+  },
+
+  // Blood rune, styled after "blood rune.webp": a hand-painted ring with
+  // uneven brush passes, an inscribed hexagram, a spiral at the heart,
+  // splatter droplets — encircled by flickering candles. All jitter is
+  // seeded so each rune keeps its own fixed imperfections every frame.
+  renderBloodRune(ctx, cx, cy, R, seed, t) {
+    const rand = (n) => {
+      const v = Math.sin(seed * 127.1 + n * 311.7) * 43758.5453;
+      return v - Math.floor(v);
+    };
+    const BLOOD = '#8c1414';
+    const DARK = '#5f0c0c';
+    ctx.save();
+    ctx.lineCap = 'round';
+
+    // Ring: three offset arc passes fake a brush of uneven thickness,
+    // each stopping just short of a full turn so the stroke has ends.
+    for (const [dx, dy, w, col, a] of [
+      [0, 0, 9, BLOOD, 0.85],
+      [3, 2, 4, DARK, 0.6],
+      [-2, 3, 3, '#a52020', 0.5],
+    ]) {
+      ctx.globalAlpha = a;
+      ctx.strokeStyle = col;
+      ctx.lineWidth = w;
+      const start = rand(w) * Math.PI * 2;
+      ctx.beginPath();
+      ctx.arc(cx + dx, cy + dy, R - w / 2, start, start + 6.15);
+      ctx.stroke();
+    }
+
+    // Hexagram: two hand-drawn triangles, corners nudged off-true.
+    ctx.globalAlpha = 0.8;
+    ctx.strokeStyle = BLOOD;
+    ctx.lineWidth = 5;
+    for (const off of [0, Math.PI]) {
+      ctx.beginPath();
+      for (let i = 0; i <= 3; i++) {
+        const a = off + (i % 3) * (Math.PI * 2 / 3) - Math.PI / 2
+                + (rand(i + off * 7) - 0.5) * 0.07;
+        const x = cx + Math.cos(a) * R * 0.92;
+        const y = cy + Math.sin(a) * R * 0.92;
+        i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+      }
+      ctx.stroke();
+    }
+
+    // Spiral at the heart
+    ctx.lineWidth = 4.5;
+    ctx.beginPath();
+    for (let i = 0; i <= 40; i++) {
+      const a = (i / 40) * Math.PI * 4 + seed;
+      const rr = R * 0.22 * (i / 40);
+      const x = cx + Math.cos(a) * rr, y = cy + Math.sin(a) * rr;
+      i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+    }
+    ctx.stroke();
+
+    // Splatter droplets flung around the ring
+    ctx.fillStyle = DARK;
+    for (let i = 0; i < 14; i++) {
+      const a = rand(i + 10) * Math.PI * 2;
+      const rr = R * (0.88 + rand(i + 30) * 0.3);
+      ctx.globalAlpha = 0.35 + rand(i + 50) * 0.4;
+      ctx.beginPath();
+      ctx.arc(cx + Math.cos(a) * rr, cy + Math.sin(a) * rr,
+              1.5 + rand(i + 70) * 3.5, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+
+    // Candles around the seal: wax stub, melt blob, flickering flame.
+    for (let i = 0; i < 6; i++) {
+      const a = (i / 6) * Math.PI * 2 + rand(i + 90) * 0.5;
+      const x = cx + Math.cos(a) * (R + 18 + rand(i) * 14);
+      const y = cy + Math.sin(a) * (R + 18 + rand(i) * 14);
+      const hgt = 9 + rand(i + 5) * 6;
+      const flick = 0.75 + Math.sin(t * (6 + rand(i) * 3) + i * 2.1) * 0.25;
+      // warm light pool on the floor
+      ctx.fillStyle = `rgba(255, 160, 60, ${0.04 + 0.05 * flick})`;
+      ctx.beginPath();
+      ctx.ellipse(x, y + 2, 22, 10, 0, 0, Math.PI * 2);
+      ctx.fill();
+      // wax body with a shaded side and melted base
+      ctx.fillStyle = '#e8dcc0';
+      ctx.fillRect(x - 3, y - hgt, 6, hgt);
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.18)';
+      ctx.fillRect(x + 1, y - hgt, 2, hgt);
+      ctx.fillStyle = '#e8dcc0';
+      ctx.beginPath();
+      ctx.ellipse(x, y, 5, 2.5, 0, 0, Math.PI * 2);
+      ctx.fill();
+      // flame
+      ctx.save();
+      ctx.shadowColor = 'rgba(255, 150, 40, 0.9)';
+      ctx.shadowBlur = 8 + flick * 6;
+      ctx.fillStyle = '#ffd27a';
+      ctx.beginPath();
+      ctx.ellipse(x, y - hgt - 4, 2, 3.6 + flick * 1.4, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#fff3c8';
+      ctx.beginPath();
+      ctx.ellipse(x, y - hgt - 3.2, 1, 1.8, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
+    ctx.restore();
+  },
+
   render(ctx, camera) {
     const o = camera.toScreen(0, 0);
 
-    // Floor base
-    ctx.fillStyle = '#0d0c12';
+    // Grout base — stones are drawn inset so the gaps read as dark mortar.
+    ctx.fillStyle = '#241d2e';
     ctx.fillRect(o.x, o.y, CONFIG.worldWidth, CONFIG.worldHeight);
 
-    // Flagstones: deterministic per-tile tone variation (hash on indices)
-    // so the floor has texture without any image assets.
+    // Beveled flagstones, styled after the bg.webp tileset: per-tile tone
+    // from a hash, light catching the top/left edge, shadow pooling
+    // bottom/right, pock marks on worn stones. Trap tiles render spikes.
     const T = this.TILE;
     const ix0 = Math.floor(camera.x / T), iy0 = Math.floor(camera.y / T);
     const ix1 = Math.ceil((camera.x + camera.w) / T);
     const iy1 = Math.ceil((camera.y + camera.h) / T);
-    for (let ix = ix0; ix <= ix1; ix++) {
-      for (let iy = iy0; iy <= iy1; iy++) {
+    const STONES = ['#4d4360', '#484057', '#524866', '#453d52'];
+    for (let ix = Math.max(0, ix0); ix <= ix1; ix++) {
+      for (let iy = Math.max(0, iy0); iy <= iy1; iy++) {
+        if (ix >= CONFIG.worldWidth / T || iy >= CONFIG.worldHeight / T) continue;
+        const sx = ix * T - camera.x, sy = iy * T - camera.y;
+        if (isTrapTile(ix, iy)) { this.renderTrap(ctx, sx, sy); continue; }
         const h = ((ix * 73856093) ^ (iy * 19349663)) >>> 0;
-        const m = h % 9;
-        if (m === 0)      ctx.fillStyle = 'rgba(255, 255, 255, 0.018)';
-        else if (m === 1) ctx.fillStyle = 'rgba(138, 43, 226, 0.028)';
-        else if (m === 2) ctx.fillStyle = 'rgba(0, 0, 0, 0.16)';
-        else continue;
-        ctx.fillRect(ix * T - camera.x, iy * T - camera.y, T, T);
+        // Stone face
+        ctx.fillStyle = STONES[h % STONES.length];
+        ctx.fillRect(sx + 3, sy + 3, T - 6, T - 6);
+        // Bevel: lit top/left, shaded bottom/right
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.07)';
+        ctx.fillRect(sx + 3, sy + 3, T - 6, 5);
+        ctx.fillRect(sx + 3, sy + 3, 5, T - 6);
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.26)';
+        ctx.fillRect(sx + 3, sy + T - 8, T - 6, 5);
+        ctx.fillRect(sx + T - 8, sy + 3, 5, T - 6);
+        // Wear: pock marks on some stones
+        if (h % 5 === 0) {
+          ctx.fillStyle = 'rgba(0, 0, 0, 0.22)';
+          const px = sx + 14 + (h % 61), py = sy + 12 + (h % 53);
+          ctx.fillRect(px, py, 7, 5);
+          ctx.fillRect(px + 12, py + 18, 5, 4);
+        }
       }
     }
 
-    // Grout lines between flagstones (dark, not neon)
-    ctx.strokeStyle = 'rgba(0, 0, 0, 0.4)';
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    for (let x = ix0 * T; x <= camera.x + camera.w; x += T) {
-      const sx = x - camera.x;
-      ctx.moveTo(sx, 0); ctx.lineTo(sx, camera.h);
-    }
-    for (let y = iy0 * T; y <= camera.y + camera.h; y += T) {
-      const sy = y - camera.y;
-      ctx.moveTo(0, sy); ctx.lineTo(camera.w, sy);
-    }
-    ctx.stroke();
-
-    // Ceremonial rune circles — double ring + tick marks, very faint.
-    ctx.strokeStyle = 'rgba(138, 43, 226, 0.09)';
-    for (const c of this.RUNES) {
+    // Blood runes (see "blood rune.webp"), each ringed with candles.
+    const now = performance.now() / 1000;
+    this.RUNES.forEach((c, i) => {
       const s = camera.toScreen(c.x, c.y);
-      ctx.lineWidth = 3;
+      if (s.x < -c.r - 60 || s.x > camera.w + c.r + 60 ||
+          s.y < -c.r - 60 || s.y > camera.h + c.r + 60) return;
+      this.renderBloodRune(ctx, s.x, s.y, c.r, i + 1, now);
+    });
+
+    // Altar of the Crimson Relic: a raised dais with a rune ring and a
+    // pedestal table — reads as a special spot from across the arena.
+    const alt = camera.toScreen(CONFIG.altar.x, CONFIG.altar.y);
+    if (alt.x > -160 && alt.x < camera.w + 160 &&
+        alt.y > -160 && alt.y < camera.h + 160) {
+      const pulse = 0.5 + Math.sin(performance.now() / 400) * 0.2;
+      // Crimson glow bleeding onto the floor
+      ctx.save();
+      ctx.shadowColor = `rgba(255, 47, 78, ${pulse})`;
+      ctx.shadowBlur = 30;
+      ctx.fillStyle = '#3b3049';
       ctx.beginPath();
-      ctx.arc(s.x, s.y, c.r, 0, Math.PI * 2);
+      ctx.ellipse(alt.x, alt.y, 110, 46, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+      // Dais steps: two stacked stone slabs
+      ctx.strokeStyle = 'rgba(255, 120, 140, 0.35)';
+      ctx.lineWidth = 2;
       ctx.stroke();
-      ctx.lineWidth = 1;
+      ctx.fillStyle = '#484057';
       ctx.beginPath();
-      ctx.arc(s.x, s.y, c.r * 0.78, 0, Math.PI * 2);
+      ctx.ellipse(alt.x, alt.y - 6, 84, 34, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(0, 0, 0, 0.35)';
       ctx.stroke();
-      // 8 radial ticks between the rings
+      // Rune ring etched into the top step
+      ctx.strokeStyle = `rgba(255, 47, 78, ${0.35 + pulse * 0.3})`;
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([8, 6]);
       ctx.beginPath();
-      for (let i = 0; i < 8; i++) {
-        const a = (i / 8) * Math.PI * 2;
-        ctx.moveTo(s.x + Math.cos(a) * c.r * 0.78, s.y + Math.sin(a) * c.r * 0.78);
-        ctx.lineTo(s.x + Math.cos(a) * c.r,        s.y + Math.sin(a) * c.r);
-      }
+      ctx.ellipse(alt.x, alt.y - 6, 64, 25, 0, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      // Pedestal table: stone column with a slab top
+      ctx.fillStyle = '#2a2338';
+      ctx.fillRect(alt.x - 15, alt.y - 58, 30, 48);
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.3)'; // column side shading
+      ctx.fillRect(alt.x + 5, alt.y - 58, 10, 48);
+      ctx.fillStyle = '#4d4360';
+      ctx.beginPath();
+      ctx.ellipse(alt.x, alt.y - 58, 26, 10, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(255, 120, 140, 0.4)';
+      ctx.lineWidth = 1.5;
       ctx.stroke();
     }
 
@@ -195,9 +372,26 @@ class Game {
   update(dt) {
     const w = this.world;
     w.time += dt;
+    // Mouse in world coords (screen + camera) for mouse-follow movement.
+    Input.mouseWorldX = Input.mouse.x + Camera.x;
+    Input.mouseWorldY = Input.mouse.y + Camera.y;
     w.player.update(dt, Input, w);
+
+    // Altar relic: materializes at the unlock wave; step onto the dais
+    // to claim the Crimson Boomerang.
+    if (!w.altarClaimed &&
+        w.spawner.wave >= CONFIG.weapons.boomerang.unlockWave &&
+        Vec.dist(w.player.x, w.player.y, CONFIG.altar.x, CONFIG.altar.y) < 60) {
+      w.altarClaimed = true;
+      w.player.stats.boomerang = true;
+      w.floaters.push(new FloatingText(
+        CONFIG.altar.x, CONFIG.altar.y - 90,
+        'CRIMSON BOOMERANG!', { color: '#ff3b5c', size: 20, life: 1.6 }
+      ));
+    }
     w.spawner.update(dt, w);
     for (const e of w.enemies)     e.update(dt, w.player, w); // boss needs world
+    Separation.resolve(w); // un-stack the crowd after everyone has moved
     for (const p of w.projectiles) p.update(dt);
     for (const h of w.hazards)     h.update(dt);
     for (const k of w.pickups)     k.update(dt, w.player);
@@ -231,6 +425,16 @@ class Game {
 
     // Pickups lie flat on the floor — always drawn under standing actors.
     for (const k of this.world.pickups) k.render(ctx, Camera);
+
+    // The relic hovers over the altar pedestal from its unlock wave until
+    // claimed, slowly spinning and bobbing so it beacons from a distance.
+    if (!this.world.altarClaimed &&
+        this.world.spawner.wave >= CONFIG.weapons.boomerang.unlockWave) {
+      const now = performance.now() / 1000;
+      const alt = Camera.toScreen(CONFIG.altar.x, CONFIG.altar.y);
+      drawBoomerang(ctx, alt.x, alt.y - 78 + Math.sin(now * 2.2) * 5,
+                    1.35, now * 1.8);
+    }
 
     // Billboard depth sort: actors lower on screen (higher y) draw in front,
     // so closer characters overlap those behind them. This is the core of
@@ -280,8 +484,37 @@ class Game {
     this.state = 'levelup';
     LevelUp.open(Progression.rollChoices(3, this.world.player), (id) => {
       Progression.apply(this.world.player, id);
+      Hud.syncAbilities(this.world.player); // sidebar reflects the new pick
       this.state = 'playing';
     });
+  }
+
+  // Esc: pause/resume during play; also closes start-menu panels.
+  togglePause() {
+    if (this.state === 'playing') {
+      this.state = 'paused';
+      PauseMenu.open(this.world); // snapshot of stats + build
+    } else if (this.state === 'paused') {
+      Screens.hide('pause');
+      this.state = 'playing';
+    } else if (this.state === 'start') {
+      Screens.hide('abilities');
+      Screens.hide('menu-leaderboard');
+      Screens.hide('settings');
+      Screens.show('start');
+    }
+    // levelup / gameover / victory: Esc deliberately does nothing —
+    // the level-up choice is mandatory and the run is already over.
+  }
+
+  // Exit to the start menu from the end screen. The dead world is
+  // dropped so nothing keeps rendering behind the menu.
+  exitToMenu() {
+    this.state = 'start';
+    this.world = null;
+    Screens.hideAll();
+    Hud.hide();
+    Screens.show('start');
   }
 
   gameOver() { this._end(false); }
@@ -323,7 +556,14 @@ function main() {
   Leaderboard.init(); // cache DOM + bind the save-score button once
   Menu.init();        // start-menu panels (Abilities / Leaderboard)
   const game = new Game(canvas);
-  Screens.bind({ onStart: () => game.start(), onRestart: () => game.start() });
+  Screens.bind({
+    onStart: () => game.start(),
+    onRestart: () => game.start(),
+    onExit: () => game.exitToMenu(),
+  });
+  addEventListener('keydown', (e) => {
+    if (e.code === 'Escape') game.togglePause();
+  });
   Screens.show('start');
   requestAnimationFrame((t) => { game._last = t; game.frame(t); });
 }

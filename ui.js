@@ -4,7 +4,8 @@
   logic — it reflects state and reports user choices back via callbacks.
 */
 
-import { UPGRADES } from './config.js';
+import { UPGRADES, Settings } from './config.js';
+import { icon } from './icons.js';
 
 const LEADERBOARD_KEY = 'exorcist_survival_scores';
 
@@ -19,8 +20,32 @@ export const Hud = {
       wave: document.getElementById('hud-wave'),
       timer: document.getElementById('hud-timer'),
       kills: document.getElementById('hud-kills'),
+      abilities: document.getElementById('hud-abilities'),
     };
+    if (this.el.abilities) this.el.abilities.innerHTML = ''; // fresh run
     document.getElementById('hud').classList.remove('hidden');
+  },
+
+  // Rebuild the unlocked-abilities sidebar. Called on every upgrade pick
+  // (not per frame — the build only changes when the player levels).
+  syncAbilities(player) {
+    const box = this.el.abilities;
+    if (!box) return;
+    box.innerHTML = '';
+    for (const [id, count] of Object.entries(player.acquired || {})) {
+      const up = UPGRADES.find((u) => u.id === id);
+      if (!up) continue;
+      const tile = document.createElement('div');
+      tile.className = up.tier ? `hud-ability ${up.tier}` : 'hud-ability';
+      tile.title = `${up.name} — ${up.desc}`;
+      tile.innerHTML = icon(id) +
+        (count > 1 ? `<span class="stack">×${count}</span>` : '');
+      box.appendChild(tile);
+    }
+  },
+  hide() {
+    const el = document.getElementById('hud');
+    if (el) el.classList.add('hidden');
   },
   render(world) {
     if (!this.el.health) return;
@@ -38,7 +63,7 @@ export const Hud = {
 
 // Screens: start / pause / game over ---------------------------------
 export const Screens = {
-  _ids: ['start', 'levelup', 'gameover', 'pause', 'abilities', 'menu-leaderboard'],
+  _ids: ['start', 'levelup', 'gameover', 'pause', 'abilities', 'menu-leaderboard', 'settings'],
   show(id) {
     const el = document.getElementById(`screen-${id}`);
     if (el) el.classList.remove('hidden');
@@ -62,12 +87,16 @@ export const Screens = {
     }
     this.show('gameover');
   },
-  // Wire start/restart buttons; call provided handlers.
-  bind({ onStart, onRestart }) {
+  // Wire start/restart/exit buttons; call provided handlers.
+  bind({ onStart, onRestart, onExit }) {
     const start = document.getElementById('btn-start');
     const restart = document.getElementById('btn-restart');
+    const exit = document.getElementById('btn-exit');
+    const pauseQuit = document.getElementById('btn-pause-quit');
     if (start && onStart) start.addEventListener('click', onStart);
     if (restart && onRestart) restart.addEventListener('click', onRestart);
+    if (exit && onExit) exit.addEventListener('click', onExit);
+    if (pauseQuit && onExit) pauseQuit.addEventListener('click', onExit);
   },
 };
 
@@ -85,7 +114,7 @@ export const LevelUp = {
       // get their own look + a tier tag; commons stay plain.
       card.className = up.tier ? `card ${up.tier}` : 'card';
       const tag = up.tier ? `<span class="tier-tag">${up.tier.toUpperCase()}</span>` : '';
-      card.innerHTML = `${tag}<h3>${up.name}</h3><p>${up.desc}</p>`;
+      card.innerHTML = `${tag}<div class="card-icon">${icon(up.id)}</div><h3>${up.name}</h3><p>${up.desc}</p>`;
       card.addEventListener('click', () => {
         screen.classList.add('hidden');
         onPick(up.id);
@@ -226,6 +255,48 @@ export const Leaderboard = {
   },
 };
 
+// Pause menu (Esc): run snapshot + acquired abilities ------------------
+export const PauseMenu = {
+  open(world) {
+    const p = world.player;
+
+    const stats = document.getElementById('pause-stats');
+    if (stats) {
+      const wave = world.spawner.bossSpawned ? 'FINAL' : world.spawner.wave;
+      const weapon = p.hasWeapon('melee') ? 'Spirit Blade' : 'Talisman Shots';
+      stats.innerHTML =
+        `Wave <strong>${wave}</strong> · Lv <strong>${p.level}</strong>` +
+        ` · <strong>${world.kills}</strong> kills · ${Math.floor(world.time)}s<br>` +
+        `HP ${Math.ceil(p.health)}/${p.stats.maxHealth} · Weapon: <strong>${weapon}</strong>`;
+    }
+
+    // Acquired abilities as tier-colored chips; hover shows the full desc.
+    const list = document.getElementById('pause-abilities');
+    if (list) {
+      list.innerHTML = '';
+      const entries = Object.entries(p.acquired || {});
+      if (!entries.length) {
+        const empty = document.createElement('span');
+        empty.className = 'pause-empty';
+        empty.textContent = 'No abilities yet — level up to choose one.';
+        list.appendChild(empty);
+      }
+      for (const [id, count] of entries) {
+        const up = UPGRADES.find((u) => u.id === id);
+        if (!up) continue;
+        const chip = document.createElement('span');
+        chip.className = up.tier ? `ability-chip ${up.tier}` : 'ability-chip';
+        chip.title = up.desc + (up.note ? ` (${up.note})` : '');
+        const label = count > 1 ? `${up.name} ×${count}` : up.name;
+        chip.innerHTML = `<span class="chip-icon">${icon(id)}</span>${label}`;
+        list.appendChild(chip);
+      }
+    }
+
+    Screens.show('pause');
+  },
+};
+
 // Start-menu panels: Abilities compendium + Leaderboard viewer ---------
 export const Menu = {
   // Wire the menu buttons once at boot (called from game.js main()).
@@ -245,6 +316,19 @@ export const Menu = {
     });
     wire('btn-abilities-back',   () => {Screens.show('start') ; Screens.hide('abilities');});
     wire('btn-leaderboard-back', () => {Screens.show('start') ; Screens.hide('menu-leaderboard');});
+
+    // Settings panel: pick control scheme, highlight the active one.
+    const markControls = () => {
+      document.getElementById('btn-controls-kb')?.classList.toggle('primary', Settings.controls === 'keyboard');
+      document.getElementById('btn-controls-mouse')?.classList.toggle('primary', Settings.controls === 'mouse');
+    };
+    wire('btn-settings', () => {
+      markControls();
+      Screens.hide('start'); Screens.show('settings');
+    });
+    wire('btn-controls-kb',    () => { Settings.setControls('keyboard'); markControls(); });
+    wire('btn-controls-mouse', () => { Settings.setControls('mouse');    markControls(); });
+    wire('btn-settings-back',  () => { Screens.show('start'); Screens.hide('settings'); });
   },
 
   // Build the compendium from the live UPGRADES pool, grouped by tier,
@@ -276,7 +360,7 @@ export const Menu = {
         card.className = up.tier ? `card ${up.tier}` : 'card';
         const tag = up.tier ? `<span class="tier-tag">${up.tier.toUpperCase()}</span>` : '';
         const note = up.note ? `<p class="note">${up.note}</p>` : '';
-        card.innerHTML = `${tag}<h3>${up.name}</h3><p>${up.desc}</p>${note}`;
+        card.innerHTML = `${tag}<div class="card-icon">${icon(up.id)}</div><h3>${up.name}</h3><p>${up.desc}</p>${note}`;
         row.appendChild(card);
       }
       container.appendChild(row);
