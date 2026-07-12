@@ -23,12 +23,49 @@ export const Vec = {
 const Input = {
   keys: new Set(),
   mouse: { x: 0, y: 0, down: false },
-  init() {
+  // Active touch joystick: anchored where the finger lands, vector follows
+  // the drag. Movement only — weapons already auto-aim at the nearest enemy.
+  touch: null, // { id, ox, oy, x, y }
+  init(canvas) {
     addEventListener('keydown', (e) => this.keys.add(e.code));
     addEventListener('keyup',   (e) => this.keys.delete(e.code));
     addEventListener('mousemove', (e) => { this.mouse.x = e.clientX; this.mouse.y = e.clientY; });
     addEventListener('mousedown', () => { this.mouse.down = true; });
     addEventListener('mouseup',   () => { this.mouse.down = false; });
+
+    // Touch listeners live on the canvas so DOM buttons keep normal taps.
+    // preventDefault stops scroll/zoom gestures and synthetic mouse events.
+    canvas.addEventListener('touchstart', (e) => {
+      e.preventDefault();
+      if (this.touch) return; // first finger owns the stick
+      const t = e.changedTouches[0];
+      this.touch = { id: t.identifier, ox: t.clientX, oy: t.clientY, x: t.clientX, y: t.clientY };
+    }, { passive: false });
+    canvas.addEventListener('touchmove', (e) => {
+      e.preventDefault();
+      for (const t of e.changedTouches) {
+        if (this.touch && t.identifier === this.touch.id) {
+          this.touch.x = t.clientX;
+          this.touch.y = t.clientY;
+        }
+      }
+    }, { passive: false });
+    const end = (e) => {
+      for (const t of e.changedTouches) {
+        if (this.touch && t.identifier === this.touch.id) this.touch = null;
+      }
+    };
+    canvas.addEventListener('touchend', end);
+    canvas.addEventListener('touchcancel', end);
+  },
+  // Normalized joystick direction, {0,0} inside the deadzone, null when idle.
+  joyVec() {
+    if (!this.touch) return null;
+    const dx = this.touch.x - this.touch.ox;
+    const dy = this.touch.y - this.touch.oy;
+    const len = Math.hypot(dx, dy);
+    if (len < 12) return { x: 0, y: 0 }; // deadzone: resting finger = stand still
+    return { x: dx / len, y: dy / len };
   },
 };
 
@@ -478,6 +515,28 @@ class Game {
     ctx.restore();
 
     Hud.render(this.world);
+
+    // Touch joystick overlay (screen space): faint base ring where the
+    // finger landed, knob clamped to the rim, tracking the drag.
+    if (Input.touch && this.state === 'playing') {
+      const { ox, oy, x, y } = Input.touch;
+      const R = 48;
+      const dx = x - ox, dy = y - oy;
+      const len = Math.hypot(dx, dy) || 1;
+      const k = Math.min(len, R);
+      ctx.save();
+      ctx.globalAlpha = 0.35;
+      ctx.strokeStyle = '#c9b8ff';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(ox, oy, R, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.fillStyle = '#c9b8ff';
+      ctx.beginPath();
+      ctx.arc(ox + (dx / len) * k, oy + (dy / len) * k, 18, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
   }
 
   openLevelUp() {
@@ -552,7 +611,7 @@ function main() {
   resize();
   addEventListener('resize', resize);
 
-  Input.init();
+  Input.init(canvas);
   Leaderboard.init(); // cache DOM + bind the save-score button once
   Menu.init();        // start-menu panels (Abilities / Leaderboard)
   const game = new Game(canvas);

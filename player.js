@@ -85,9 +85,12 @@ export class Player extends Entity {
   }
 
   update(dt, input, world) {
-    // --- Movement: direction vector from keys OR mouse (Settings) --------
+    // --- Movement: touch joystick, else keys OR mouse (Settings) ---------
     let dx = 0, dy = 0;
-    if (Settings.controls === 'mouse') {
+    const joy = input.joyVec?.();
+    if (joy) {
+      dx = joy.x; dy = joy.y;
+    } else if (Settings.controls === 'mouse') {
       // Walk toward the cursor; deadzone so we don't jitter on arrival.
       const mx = input.mouseWorldX - this.x;
       const my = input.mouseWorldY - this.y;
