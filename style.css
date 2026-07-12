@@ -366,6 +366,25 @@ html, body {
   border-color: rgba(255, 60, 90, 0.45);
 }
 
+/* Pause button: top-right corner, the one clickable thing in the HUD.
+   Sized generously so it's an easy thumb target on phones. */
+#btn-pause {
+  position: absolute;
+  top: 0.9rem;
+  right: 0.9rem;
+  pointer-events: auto;
+  width: 44px;
+  height: 44px;
+  font-size: 0.9rem;
+  color: #d8d2e8;
+  background: rgba(12, 9, 20, 0.6);
+  border: 1px solid rgba(138, 43, 226, 0.35);
+  border-radius: 6px;
+  backdrop-filter: blur(2px);
+  cursor: pointer;
+}
+#btn-pause:hover { border-color: rgba(138, 43, 226, 0.8); color: #fff; }
+
 /* Ability icons ------------------------------------------------------ */
 /* Card artwork (level-up modal + compendium). Commons draw in
    currentColor, so the tier rules below tint them; rare/epic art

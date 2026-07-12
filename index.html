@@ -31,6 +31,8 @@
       <div id="hud-kills"></div>
       <!-- Unlocked-abilities sidebar (icons + stack counts, right edge) -->
       <div id="hud-abilities"></div>
+      <!-- Pause: clickable/tappable; the only interactive HUD element -->
+      <button id="btn-pause" aria-label="Pause">❚❚</button>
     </div>
 
     <!-- Start / title screen -->
@@ -142,6 +144,8 @@
       <h2>Paused</h2>
       <div id="pause-stats"></div>
       <div id="pause-abilities"></div>
+      <button id="btn-resume" class="menu-btn primary">Resume</button>
+      <button id="btn-pause-controls" class="menu-btn">Movement: Keyboard</button>
       <button id="btn-pause-quit" class="menu-btn">Quit to Menu</button>
       <p class="pause-hint">Hover an ability for details · Esc to resume</p>
     </div>

@@ -329,6 +329,22 @@ export const Menu = {
     wire('btn-controls-kb',    () => { Settings.setControls('keyboard'); markControls(); });
     wire('btn-controls-mouse', () => { Settings.setControls('mouse');    markControls(); });
     wire('btn-settings-back',  () => { Screens.show('start'); Screens.hide('settings'); });
+
+    // Pause-menu controls toggle: one button that flips the scheme.
+    // markControls keeps the start-menu settings panel in sync with it.
+    const pauseControls = document.getElementById('btn-pause-controls');
+    const markPauseControls = () => {
+      if (pauseControls) {
+        pauseControls.textContent =
+          `Movement: ${Settings.controls === 'mouse' ? 'Mouse (follow cursor)' : 'Keyboard (WASD / Arrows)'}`;
+      }
+    };
+    wire('btn-pause-controls', () => {
+      Settings.setControls(Settings.controls === 'mouse' ? 'keyboard' : 'mouse');
+      markPauseControls();
+      markControls();
+    });
+    markPauseControls();
   },
 
   // Build the compendium from the live UPGRADES pool, grouped by tier,

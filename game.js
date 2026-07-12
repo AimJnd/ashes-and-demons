@@ -623,6 +623,9 @@ function main() {
   addEventListener('keydown', (e) => {
     if (e.code === 'Escape') game.togglePause();
   });
+  // HUD pause button + pause-screen Resume — same toggle as Esc.
+  document.getElementById('btn-pause')?.addEventListener('click', () => game.togglePause());
+  document.getElementById('btn-resume')?.addEventListener('click', () => game.togglePause());
   Screens.show('start');
   requestAnimationFrame((t) => { game._last = t; game.frame(t); });
 }
