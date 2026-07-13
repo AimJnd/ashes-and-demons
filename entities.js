@@ -46,8 +46,7 @@ export class Enemy extends Entity {
   // Trigger the subtle on-hit flash. Called by Combat when struck.
   flash() { this._hitFlash = ENEMY_FLASH; }
 
-  update(dt, player) {
-    // behavior switch — only 'chase' for now: move straight at the player.
+  update(dt, player, world) {
     const dx = player.x - this.x;
     const dy = player.y - this.y;
     const d = Math.hypot(dx, dy) || 1;
@@ -59,8 +58,31 @@ export class Enemy extends Entity {
       speed *= CONFIG.weapons.chrono.slowMul;
     }
 
-    this.x += (dx / d) * speed * dt;
-    this.y += (dy / d) * speed * dt;
+    if (this.def.behavior === 'spit') {
+      // Skirmisher: hold preferred range — advance when far, back off
+      // when the player closes in, stand ground in between.
+      const want = this.def.range;
+      const dir = d > want ? 1 : d < want * 0.65 ? -1 : 0;
+      this.x += (dx / d) * speed * dir * dt;
+      this.y += (dy / d) * speed * dir * dt;
+      // Spit at the player on a cooldown while roughly in range. First
+      // shot is randomized so a batch of spawns doesn't volley in sync.
+      // (world is absent in the Node sim's calls — then it just moves.)
+      this._spitCd = (this._spitCd ?? Math.random() * this.def.cooldown) - dt;
+      if (world && this._spitCd <= 0 && d < want * 1.35) {
+        this._spitCd = this.def.cooldown;
+        const sp = this.def.spitSpeed;
+        world.hazards.push(new Spit(
+          this.x, this.y - this.radius,
+          (dx / d) * sp, (dy / d) * sp, this.damage
+        ));
+      }
+    } else {
+      // 'chase': move straight at the player.
+      this.x += (dx / d) * speed * dt;
+      this.y += (dy / d) * speed * dt;
+    }
+
     if (dx < 0) this.flip = true;
     else if (dx > 0) this.flip = false;
     if (this._hitFlash > 0) this._hitFlash -= dt;
@@ -75,10 +97,11 @@ export class Enemy extends Entity {
     const t = performance.now() / 1000 + this._phase;
     let body;
     switch (this.type) {
-      case 'brute':  body = this._renderBrute(ctx, s, t); break;
-      case 'swarm':  body = this._renderSwarm(ctx, s, t); break;
-      case 'wyvern': body = this._renderWyvern(ctx, s, t); break;
-      default:       body = this._renderShade(ctx, s, t); break;
+      case 'brute':   body = this._renderBrute(ctx, s, t); break;
+      case 'swarm':   body = this._renderSwarm(ctx, s, t); break;
+      case 'wyvern':  body = this._renderWyvern(ctx, s, t); break;
+      case 'spitter': body = this._renderSpitter(ctx, s, t); break;
+      default:        body = this._renderShade(ctx, s, t); break;
     }
     if (this._hitFlash > 0 && body) {
       ctx.save();
@@ -87,6 +110,53 @@ export class Enemy extends Entity {
       ctx.fill(body);
       ctx.restore();
     }
+  }
+
+  // Spitter: squat venom toad-imp — breathing round body, back spines,
+  // glowing eyes, and a mouth that gapes open just before it spits.
+  _renderSpitter(ctx, s, t) {
+    const r = this.radius;
+    const squash = 1 + Math.sin(t * 3.2) * 0.06; // idle breathing
+    const w = r * 1.5, h = r * 1.25 * squash;
+    const cy = s.y - h * 0.8;
+    const dir = this.flip ? -1 : 1;
+
+    this._shadow(ctx, s, r * 0.95);
+
+    // Back spines poke over the silhouette (drawn first, behind the body).
+    ctx.fillStyle = '#33551a';
+    for (const [ox, sh] of [[-0.45, 0.9], [-0.1, 1.15], [0.25, 0.9]]) {
+      const bx = s.x - dir * w * ox;
+      ctx.beginPath();
+      ctx.moveTo(bx - 4, cy - h * 0.55);
+      ctx.lineTo(bx, cy - h * 0.55 - r * sh * 0.55);
+      ctx.lineTo(bx + 4, cy - h * 0.55);
+      ctx.closePath();
+      ctx.fill();
+    }
+
+    const p = new Path2D();
+    p.ellipse(s.x, cy, w, h, 0, 0, Math.PI * 2);
+    ctx.fillStyle = this._vgrad(ctx, s.x, cy - h, cy + h, '#a8d84a', '#4a7a1e');
+    ctx.fill(p);
+    ctx.strokeStyle = 'rgba(200, 255, 120, 0.7)';
+    ctx.lineWidth = 1.5;
+    ctx.stroke(p);
+
+    // Mouth: a dark slit facing the player that gapes as the spit charges.
+    const gape = this._spitCd !== undefined
+      ? Math.max(0, (0.45 - Math.max(0, this._spitCd)) / 0.45) : 0;
+    ctx.fillStyle = '#1d2b10';
+    ctx.beginPath();
+    ctx.ellipse(s.x + dir * w * 0.4, cy + h * 0.15,
+                w * 0.28, h * (0.08 + gape * 0.3), 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Venom-lit eyes
+    this._glowDot(ctx, s.x + dir * w * 0.18, cy - h * 0.38, 2.2, '#ffec6e');
+    this._glowDot(ctx, s.x + dir * w * 0.52, cy - h * 0.30, 2.2, '#ffec6e');
+
+    return p;
   }
 
   _shadow(ctx, s, w, alpha = 0.35) {
@@ -621,6 +691,20 @@ export class Pickup extends Entity {
       ctx.arc(s.x, s.y - r * 0.15, r * 0.35, 0, Math.PI * 2);
       ctx.fill();
       ctx.restore();
+    } else if (this.kind === 'gold') {
+      // Gold coin: warm disc that squashes on one axis to fake a spin.
+      const spin = 0.35 + Math.abs(Math.sin(t * 3)) * 0.65;
+      ctx.save();
+      ctx.fillStyle = '#ffd166';
+      ctx.shadowColor = '#ffb020';
+      ctx.shadowBlur = 8;
+      ctx.beginPath();
+      ctx.ellipse(s.x, s.y, r * spin, r, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = '#b8860b';
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+      ctx.restore();
     } else {
       // Health: glowing crimson cross (gothic reliquary vibes).
       const a = r * 0.75, b = r * 1.9;
@@ -634,6 +718,85 @@ export class Pickup extends Entity {
       ctx.fill();
       ctx.restore();
     }
+  }
+}
+
+// Spit: the spitter's venom glob — a hostile projectile riding the same
+// world.hazards list (and Combat rules) as the dragon's fireballs.
+export class Spit extends Entity {
+  constructor(x, y, vx, vy, damage) {
+    super(x, y, 7);
+    this.vx = vx;
+    this.vy = vy;
+    this.damage = damage;
+    this.life = 3;
+  }
+
+  update(dt) {
+    this.x += this.vx * dt;
+    this.y += this.vy * dt;
+    this.life -= dt;
+    if (this.life <= 0) this.alive = false;
+  }
+
+  render(ctx, camera) {
+    const s = camera.toScreen(this.x, this.y);
+    const wob = Math.sin(performance.now() / 60 + this.x) * 0.15;
+    ctx.save();
+    ctx.fillStyle = '#b7f34d';
+    ctx.shadowColor = '#8fd63a';
+    ctx.shadowBlur = 10;
+    ctx.beginPath();
+    ctx.ellipse(s.x, s.y, this.radius * (0.85 + wob), this.radius * (0.85 - wob), 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#e9ffb0';
+    ctx.shadowBlur = 0;
+    ctx.beginPath();
+    ctx.arc(s.x - 1.5, s.y - 1.5, this.radius * 0.35, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+}
+
+// Death burst: a handful of pixel shards in the enemy's color that scatter,
+// arc under gravity, and fade. Rides the floaters list (update/render API).
+export class Burst {
+  constructor(x, y, color) {
+    this.color = color;
+    this.maxLife = 0.45;
+    this.life = this.maxLife;
+    this.alive = true;
+    this.parts = Array.from({ length: 7 }, () => {
+      const a = Math.random() * Math.PI * 2;
+      const v = 140 * (0.4 + Math.random() * 0.6);
+      return {
+        x, y,
+        vx: Math.cos(a) * v,
+        vy: Math.sin(a) * v - 40, // slight upward pop
+        s: 2 + Math.random() * 3,
+      };
+    });
+  }
+
+  update(dt) {
+    this.life -= dt;
+    if (this.life <= 0) { this.alive = false; return; }
+    for (const p of this.parts) {
+      p.x += p.vx * dt;
+      p.y += p.vy * dt;
+      p.vy += 300 * dt; // gravity
+    }
+  }
+
+  render(ctx, camera) {
+    ctx.save();
+    ctx.globalAlpha = this.life / this.maxLife;
+    ctx.fillStyle = this.color;
+    for (const p of this.parts) {
+      const s = camera.toScreen(p.x, p.y);
+      ctx.fillRect(s.x, s.y, p.s, p.s);
+    }
+    ctx.restore();
   }
 }
 

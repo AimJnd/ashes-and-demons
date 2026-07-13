@@ -4,8 +4,8 @@
   the world state object owned by game.js; holds no rendering code.
 */
 
-import { CONFIG, ENEMIES, UPGRADES } from './config.js';
-import { Enemy, Projectile, Pickup, FloatingText } from './entities.js';
+import { CONFIG, ENEMIES, UPGRADES, Bank } from './config.js';
+import { Enemy, Projectile, Pickup, FloatingText, Burst } from './entities.js';
 import { Dragon } from './boss.js';
 
 // Spawner / difficulty director -------------------------------------
@@ -17,12 +17,7 @@ export class Spawner {
     this.bossSpawned = false;   // wave-25 dragon is on the field (or dead)
     this._wyvernQueue = 0;      // escort still waiting to fly in
     this._wyvernTimer = 0;
-  }
-
-  // True once the final wave has fully arrived — victory is then simply
-  // "no living enemies left" (checked by game.js after the cull).
-  get finalWaveArrived() {
-    return this.bossSpawned && this._wyvernQueue === 0;
+    this._flybyWave = CONFIG.boss.flyby.every; // next dragon cameo wave
   }
 
   update(dt, world) {
@@ -33,6 +28,13 @@ export class Spawner {
       CONFIG.waves.finalWave,
       1 + Math.floor(this.timer / CONFIG.waves.waveInterval)
     );
+
+    // Dragon fly-by every N waves before the real fight — a taste of the
+    // boss: untouchable, strafing fire, trampling the horde.
+    if (this.wave >= this._flybyWave && this.wave < CONFIG.waves.finalWave) {
+      this._flybyWave += CONFIG.boss.flyby.every;
+      this._spawnFlyby(world);
+    }
 
     // FINAL WAVE: regular spawning stops. The dragon flies in with its
     // wyvern escort trickling in behind it (staggered, from all bearings).
@@ -56,6 +58,26 @@ export class Spawner {
       this._spawnAccumulator -= 1;
       this.spawnEnemy(world);
     }
+  }
+
+  // Fly-by cameo: enters from off-screen on a straight line drawn through
+  // the player's current position, crosses the arena, and exits.
+  _spawnFlyby(world) {
+    const p = world.player;
+    const ang = Math.random() * Math.PI * 2;
+    const x = p.x + Math.cos(ang) * 900;
+    const y = p.y + Math.sin(ang) * 900;
+    const aim = Math.atan2(p.y - y, p.x - x);
+    const sp = CONFIG.boss.flyby.speed;
+    world.enemies.push(new Dragon(x, y, {
+      vx: Math.cos(aim) * sp,
+      vy: Math.sin(aim) * sp,
+    }));
+    world.flybyRoar = true; // game.js: roar + camera rumble
+    world.floaters.push(new FloatingText(
+      p.x, p.y - 120, 'ASHMAW PASSES OVERHEAD...',
+      { color: '#ff8c42', size: 20, life: 2 }
+    ));
   }
 
   _startBossWave(world) {
@@ -102,6 +124,9 @@ export class Spawner {
   }
 
   _pickType() {
+    // Spitters join from wave 8 — a separate roll so the existing mix
+    // keeps its proportions.
+    if (this.wave >= 8 && Math.random() < 0.12) return 'spitter';
     const r = Math.random();
     if (this.wave >= 4 && r < 0.2) return 'brute';
     if (r < 0.4) return 'swarm';
@@ -191,6 +216,17 @@ export const Combat = {
   // future DoTs) produces identical feedback and loot.
   damageEnemy(world, e, damage) {
     if (!e.alive) return; // guard: never double-kill / double-drop
+    // Fly-by dragon: untouchable until its natural final-wave spawn.
+    // Throttled floater so a stream of hits doesn't wallpaper the screen.
+    if (e.invulnerable) {
+      if (!e._immuneT || world.time - e._immuneT > 0.4) {
+        e._immuneT = world.time;
+        world.floaters.push(new FloatingText(
+          e.x, e.y - e.radius * 1.6, 'IMMUNE', { color: '#9aa0b4', size: 14 }
+        ));
+      }
+      return;
+    }
     const player = world.player;
     e.hp -= damage;
     e.flash(); // subtle white tint so the struck enemy pops
@@ -213,6 +249,8 @@ export const Combat = {
     if (e.hp <= 0) {
       e.alive = false;
       world.kills += 1;
+      // Death burst: the body scatters into shards of its own color.
+      world.floaters.push(new Burst(e.x, e.y, e.def?.color || '#c0392b'));
       world.pickups.push(new Pickup(e.x, e.y, 'xp', e.xp));
       // Random health drop — Lucky Charm adds to the base chance. Offset
       // slightly so it isn't hidden under the gem.
@@ -220,6 +258,33 @@ export const Combat = {
         world.pickups.push(
           new Pickup(e.x + 12, e.y, 'health', CONFIG.drops.healthValue)
         );
+      }
+      // Gold: the boss pays a flat bounty straight to the bank (victory
+      // ends the run before a dropped coin could be walked over); everyone
+      // else flips a coin for their def's gold value.
+      if (e.isBoss) {
+        Bank.addGold(CONFIG.boss.gold);
+        world.floaters.push(new FloatingText(
+          e.x, e.y - 60, `+${CONFIG.boss.gold} GOLD`,
+          { color: '#ffd166', size: 20, life: 1.6 }
+        ));
+        // The Gate of Descent rises a little away from the corpse, nudged
+        // toward the arena center so it can never land outside the walls.
+        // game.js animates it open and reads the stair as the exit.
+        const ang = Math.atan2(
+          CONFIG.worldHeight / 2 - e.y, CONFIG.worldWidth / 2 - e.x
+        );
+        world.gate = {
+          x: e.x + Math.cos(ang) * 340,
+          y: e.y + Math.sin(ang) * 340,
+          open: 0, // 0 closed → 1 fully open (door swing progress)
+        };
+        world.floaters.push(new FloatingText(
+          world.gate.x, world.gate.y - 150, 'A GATE RISES...',
+          { color: '#c9a0ff', size: 20, life: 2 }
+        ));
+      } else if (Math.random() < CONFIG.drops.goldChance) {
+        world.pickups.push(new Pickup(e.x - 12, e.y, 'gold', e.def?.gold || 1));
       }
     }
   },
@@ -240,6 +305,19 @@ export const Combat = {
         // Spend one pierce per enemy; despawn when exhausted.
         if (p.pierce > 0) { p.pierce -= 1; }
         else { p.alive = false; break; }
+      }
+    }
+
+    // Fly-by trample: the strafing dragon flattens mobs it plows through
+    // (once per mob per pass — the set lives on that pass's flyby state).
+    for (const fb of world.enemies) {
+      if (!fb.alive || !fb.flyby) continue;
+      for (const e of world.enemies) {
+        if (!e.alive || e.isBoss || fb.flyby.trampled.has(e)) continue;
+        if (hits(fb, e)) {
+          fb.flyby.trampled.add(e);
+          this.damageEnemy(world, e, CONFIG.boss.flyby.trample);
+        }
       }
     }
 
@@ -285,6 +363,8 @@ export const Combat = {
         player.gainXp(k.value);
       } else if (k.kind === 'health') {
         player.health = Math.min(player.stats.maxHealth, player.health + k.value);
+      } else if (k.kind === 'gold') {
+        Bank.addGold(k.value); // banked instantly — survives death
       }
       k.alive = false;
     }

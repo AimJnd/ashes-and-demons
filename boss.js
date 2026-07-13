@@ -151,14 +151,19 @@ export class SwipeVFX {
 
 // The Dragon --------------------------------------------------------------
 export class Dragon extends Entity {
-  constructor(x, y) {
+  // Pass flyby: { vx, vy } for the strafing cameo (waves 5, 10, ...): it
+  // flies that straight line instead of running the combat brain, spits
+  // fire at the player, and can't be hurt (Combat guards on invulnerable).
+  constructor(x, y, flyby = null) {
     const cfg = CONFIG.boss;
     super(x, y, cfg.radius);
     this.hp = cfg.hp;
     this.maxHp = cfg.hp;
     this.damage = cfg.contactDamage;
     this.xp = cfg.xp;
-    this.isBoss = true;
+    this.isBoss = true;      // Separation: shoves everyone, shoved by no one
+    this.flyby = flyby ? { ...flyby, trampled: new Set() } : null;
+    this.invulnerable = !!flyby;
     this.state = 'arrive';   // arrive -> combat
     this.flip = false;
     this._hitFlash = 0;
@@ -176,6 +181,32 @@ export class Dragon extends Entity {
   update(dt, player, world) {
     if (this._hitFlash > 0) this._hitFlash -= dt;
     const cfg = CONFIG.boss;
+
+    // Fly-by pass: hold the straight line (no clamp — it exits the arena
+    // and despawns), lobbing fireballs at the player the whole way.
+    // Contact damage and mob trampling are resolved by Combat.
+    if (this.flyby) {
+      this.x += this.flyby.vx * dt;
+      this.y += this.flyby.vy * dt;
+      this.flip = this.flyby.vx < 0;
+      this._fireCd -= dt;
+      if (this._fireCd <= 0) {
+        this._fireCd = cfg.flyby.fireInterval;
+        const a = Math.atan2(player.y - this.y, player.x - this.x);
+        world.hazards.push(new Fireball(
+          this.x + Math.cos(a) * this.radius * 0.8,
+          this.y - this.radius * 0.6 + Math.sin(a) * this.radius * 0.8,
+          Math.cos(a) * cfg.fire.speed, Math.sin(a) * cfg.fire.speed,
+          cfg.fire.damage
+        ));
+      }
+      if (this.x < -200 || this.x > CONFIG.worldWidth + 200 ||
+          this.y < -200 || this.y > CONFIG.worldHeight + 200) {
+        this.alive = false; // gone — no drops, no gate, no kill credit
+      }
+      return;
+    }
+
     const dx = player.x - this.x;
     const dy = player.y - this.y;
     const d = Math.hypot(dx, dy) || 1;
@@ -485,7 +516,8 @@ export class Dragon extends Entity {
       ctx.restore();
     }
 
-    // Boss HP bar above everything
+    // Boss HP bar above everything (not on fly-bys — you can't hurt those)
+    if (this.flyby) return;
     const bw = r * 3.4, bh = 7;
     const bx = s.x - bw / 2, by = top - r * 1.35;
     const frac = Math.max(0, this.hp / this.maxHp);

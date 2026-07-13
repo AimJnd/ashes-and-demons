@@ -4,11 +4,12 @@
   HTML loads; it imports everything else.
 */
 
-import { CONFIG, isTrapTile } from './config.js';
+import { CONFIG, isTrapTile, Progress } from './config.js';
 import { FloatingText, drawBoomerang } from './entities.js';
 import { Player } from './player.js';
 import { Spawner, Combat, Progression, Separation } from './systems.js';
 import { Hud, Screens, LevelUp, Leaderboard, Menu, PauseMenu } from './ui.js';
+import { Sfx } from './audio.js';
 
 // Math helpers (merged from math.js) ---------------------------------
 export const Vec = {
@@ -93,20 +94,21 @@ const Arena = {
 
   // Spike-trap tile: dark pit with five spikes in a quincunx, matching
   // the trap tile on the bg.webp sheet. Standing here hurts (player.js).
-  renderTrap(ctx, sx, sy) {
+  // Stage 2 recolors it as an earthen pit with sharpened wooden stakes.
+  renderTrap(ctx, sx, sy, forest) {
     const T = this.TILE;
-    ctx.fillStyle = '#16101f'; // pit floor
+    ctx.fillStyle = forest ? '#0e1409' : '#16101f'; // pit floor
     ctx.fillRect(sx + 3, sy + 3, T - 6, T - 6);
     ctx.fillStyle = 'rgba(0, 0, 0, 0.5)'; // inner shadow rim
     ctx.fillRect(sx + 3, sy + 3, T - 6, 6);
     ctx.fillRect(sx + 3, sy + 3, 6, T - 6);
     for (const [ox, oy] of [[0.5, 0.5], [0.27, 0.27], [0.73, 0.27], [0.27, 0.73], [0.73, 0.73]]) {
       const cx = sx + ox * T, cy = sy + oy * T;
-      ctx.fillStyle = '#0b0812'; // socket hole
+      ctx.fillStyle = forest ? '#070b04' : '#0b0812'; // socket hole
       ctx.beginPath();
       ctx.ellipse(cx, cy + 7, 8, 3.5, 0, 0, Math.PI * 2);
       ctx.fill();
-      ctx.fillStyle = '#978ea6'; // spike
+      ctx.fillStyle = forest ? '#8a6b45' : '#978ea6'; // spike / stake
       ctx.beginPath();
       ctx.moveTo(cx - 6, cy + 7);
       ctx.lineTo(cx, cy - 12);
@@ -231,27 +233,114 @@ const Arena = {
     ctx.restore();
   },
 
-  render(ctx, camera) {
-    const o = camera.toScreen(0, 0);
+  // Stage 2 tree scatter, seeded once: kept clear of the spawn point,
+  // the altar, the rune circles, and trap tiles so nothing playable is
+  // ever hidden under a canopy. Positions are world coords.
+  trees() {
+    if (this._trees) return this._trees;
+    const rand = (n) => {
+      const v = Math.sin(n * 127.1 + 311.7) * 43758.5453;
+      return v - Math.floor(v);
+    };
+    const out = [];
+    const cx = CONFIG.worldWidth / 2, cy = CONFIG.worldHeight / 2;
+    // Density scales with arena area: roughly one tree per 150k px².
+    const N = Math.round(CONFIG.worldWidth * CONFIG.worldHeight / 150000);
+    for (let i = 0; i < N * 6 && out.length < N; i++) {
+      const x = 80 + rand(i * 2) * (CONFIG.worldWidth - 160);
+      const y = 80 + rand(i * 2 + 1) * (CONFIG.worldHeight - 160);
+      const r = 38 + rand(i * 3) * 24;
+      if (Vec.dist(x, y, cx, cy) < 260) continue;                 // spawn
+      if (Vec.dist(x, y, CONFIG.altar.x, CONFIG.altar.y) < 200) continue;
+      if (this.RUNES.some((c) => Vec.dist(x, y, c.x, c.y) < c.r + r)) continue;
+      if (isTrapTile(Math.floor(x / this.TILE), Math.floor(y / this.TILE))) continue;
+      if (out.some((t) => Vec.dist(x, y, t.x, t.y) < t.r + r + 20)) continue;
+      out.push({ x, y, r, seed: i });
+    }
+    return (this._trees = out);
+  },
 
-    // Grout base — stones are drawn inset so the gaps read as dark mortar.
-    ctx.fillStyle = '#241d2e';
+  // Top-down canopy like the reference sheets: hard shadow pooling
+  // south-east, lobed dark crown, moonlit lobes on top.
+  renderTree(ctx, x, y, r, seed) {
+    const rand = (n) => {
+      const v = Math.sin(seed * 91.7 + n * 47.3) * 43758.5453;
+      return v - Math.floor(v);
+    };
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.38)';
+    ctx.beginPath();
+    ctx.ellipse(x + r * 0.35, y + r * 0.4, r * 1.05, r * 0.75, 0, 0, Math.PI * 2);
+    ctx.fill();
+    for (const [rr, dx, dy, col] of [
+      [1.0, 0, 0, '#13241a'],
+      [0.72, -r * 0.12, -r * 0.14, '#1b3322'],
+      [0.42, -r * 0.2, -r * 0.24, '#254430'],
+    ]) {
+      ctx.fillStyle = col;
+      ctx.beginPath();
+      for (let i = 0; i < 6; i++) {
+        const a = (i / 6) * Math.PI * 2 + rand(i) * 0.9;
+        ctx.moveTo(x + dx, y + dy);
+        ctx.arc(x + dx + Math.cos(a) * r * rr * 0.45,
+                y + dy + Math.sin(a) * r * rr * 0.45,
+                r * rr * 0.55, 0, Math.PI * 2);
+      }
+      ctx.fill();
+    }
+  },
+
+  render(ctx, camera, stage = 1) {
+    const o = camera.toScreen(0, 0);
+    const forest = stage === 2;
+
+    // Base coat: dark mortar between flagstones, or black loam under grass.
+    ctx.fillStyle = forest ? '#0d160e' : '#241d2e';
     ctx.fillRect(o.x, o.y, CONFIG.worldWidth, CONFIG.worldHeight);
 
     // Beveled flagstones, styled after the bg.webp tileset: per-tile tone
     // from a hash, light catching the top/left edge, shadow pooling
     // bottom/right, pock marks on worn stones. Trap tiles render spikes.
+    // Stage 2 swaps the pass for dark-forest grass (see forest bg.png /
+    // forest2 bg.png): mottled moss tones, grass tufts, flower speckles.
     const T = this.TILE;
     const ix0 = Math.floor(camera.x / T), iy0 = Math.floor(camera.y / T);
     const ix1 = Math.ceil((camera.x + camera.w) / T);
     const iy1 = Math.ceil((camera.y + camera.h) / T);
     const STONES = ['#4d4360', '#484057', '#524866', '#453d52'];
+    // Tones kept close so the tile grid melts into soft mottling.
+    const GRASS = ['#182a1a', '#16281a', '#1a2c1d', '#152618'];
     for (let ix = Math.max(0, ix0); ix <= ix1; ix++) {
       for (let iy = Math.max(0, iy0); iy <= iy1; iy++) {
         if (ix >= CONFIG.worldWidth / T || iy >= CONFIG.worldHeight / T) continue;
         const sx = ix * T - camera.x, sy = iy * T - camera.y;
-        if (isTrapTile(ix, iy)) { this.renderTrap(ctx, sx, sy); continue; }
+        if (isTrapTile(ix, iy)) { this.renderTrap(ctx, sx, sy, forest); continue; }
         const h = ((ix * 73856093) ^ (iy * 19349663)) >>> 0;
+        if (forest) {
+          ctx.fillStyle = GRASS[h % GRASS.length];
+          ctx.fillRect(sx, sy, T, T);
+          // Grass tufts: paired blades, seeded per tile like the pocks.
+          ctx.strokeStyle = 'rgba(70, 120, 70, 0.35)';
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          for (let i = 0; i < 4; i++) {
+            const tx = sx + 8 + ((h >> (i * 4)) % 79);
+            const ty = sy + 14 + ((h >> (i * 3 + 2)) % 73);
+            ctx.moveTo(tx, ty);
+            ctx.lineTo(tx + 2, ty - 8);
+            ctx.moveTo(tx + 5, ty);
+            ctx.lineTo(tx + 6, ty - 5);
+          }
+          ctx.stroke();
+          // Sparse flower speckles, like the pink/yellow dots in the refs.
+          if (h % 7 === 0) {
+            ctx.fillStyle = h % 2 ? '#b06a8f' : '#a89b4e';
+            const fx = sx + 20 + (h % 57), fy = sy + 24 + (h % 47);
+            ctx.fillRect(fx, fy, 3, 3);
+            ctx.fillRect(fx + 8, fy + 5, 2, 2);
+            ctx.fillRect(fx + 3, fy + 10, 2, 2);
+          }
+          continue;
+        }
         // Stone face
         ctx.fillStyle = STONES[h % STONES.length];
         ctx.fillRect(sx + 3, sy + 3, T - 6, T - 6);
@@ -269,6 +358,16 @@ const Arena = {
           ctx.fillRect(px, py, 7, 5);
           ctx.fillRect(px + 12, py + 18, 5, 4);
         }
+      }
+    }
+
+    // Forest canopies sit on the floor plane, under actors and runes.
+    if (forest) {
+      for (const t of this.trees()) {
+        const s = camera.toScreen(t.x, t.y);
+        if (s.x < -t.r * 2 || s.x > camera.w + t.r * 2 ||
+            s.y < -t.r * 2 || s.y > camera.h + t.r * 2) continue;
+        this.renderTree(ctx, s.x, s.y, t.r, t.seed);
       }
     }
 
@@ -328,14 +427,15 @@ const Arena = {
       ctx.stroke();
     }
 
-    // Boundary: heavy dark wall with a thin violet inlay + corner sigils.
-    ctx.strokeStyle = '#231b30';
+    // Boundary: heavy dark wall with a thin inlay + corner sigils —
+    // violet in the crypt, mossy green out in the dark forest.
+    ctx.strokeStyle = forest ? '#0a130b' : '#231b30';
     ctx.lineWidth = 10;
     ctx.strokeRect(o.x, o.y, CONFIG.worldWidth, CONFIG.worldHeight);
-    ctx.strokeStyle = 'rgba(138, 43, 226, 0.55)';
+    ctx.strokeStyle = forest ? 'rgba(92, 184, 116, 0.5)' : 'rgba(138, 43, 226, 0.55)';
     ctx.lineWidth = 2;
     ctx.strokeRect(o.x + 6, o.y + 6, CONFIG.worldWidth - 12, CONFIG.worldHeight - 12);
-    ctx.fillStyle = 'rgba(138, 43, 226, 0.7)';
+    ctx.fillStyle = forest ? 'rgba(92, 184, 116, 0.65)' : 'rgba(138, 43, 226, 0.7)';
     for (const [cx, cy] of [
       [0, 0], [CONFIG.worldWidth, 0],
       [0, CONFIG.worldHeight], [CONFIG.worldWidth, CONFIG.worldHeight],
@@ -352,6 +452,106 @@ const Arena = {
   },
 };
 
+// The Gate of Descent — styled after the bg.webp tiles: an arched wooden
+// door with iron bands and a skull emblem set in a stone frame, and the
+// stair tile behind it. Spawns where the dragon fell (systems.js); the
+// leaves swing open as the player nears, revealing the stairway down.
+// (x, y) is the ground point at the center of the threshold.
+function drawGate(ctx, x, y, open, t) {
+  const W = 96, H = 118, AR = W / 2; // doorway width / height / arch radius
+
+  // Ground shadow
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.35)';
+  ctx.beginPath();
+  ctx.ellipse(x, y + 6, W * 0.85, 16, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Doorway silhouette: pillars up into a round arch. Interior, glow and
+  // door leaves all clip to it so nothing bleeds past the stone frame.
+  const doorway = new Path2D();
+  doorway.moveTo(x - W / 2, y);
+  doorway.lineTo(x - W / 2, y - (H - AR));
+  doorway.arc(x, y - (H - AR), AR, Math.PI, 0);
+  doorway.lineTo(x + W / 2, y);
+  doorway.closePath();
+
+  // Interior: darkness with the stair sinking away from the viewer —
+  // steps shrink and fade as they descend (bg.webp stair tile).
+  ctx.save();
+  ctx.clip(doorway);
+  ctx.fillStyle = '#0b0812';
+  ctx.fillRect(x - W / 2, y - H, W, H);
+  let sy = y;
+  for (let i = 0; i < 6; i++) {
+    const stepH = 13 - i * 1.3;
+    const stepW = W - 8 - i * 10;
+    ctx.fillStyle = `rgba(120, 106, 145, ${Math.max(0.06, 0.85 - i * 0.15)})`;
+    ctx.fillRect(x - stepW / 2, sy - stepH, stepW, stepH - 2.5);
+    sy -= stepH;
+  }
+  // Eerie light welling up the stairwell once the doors part.
+  if (open > 0) {
+    ctx.fillStyle = `rgba(150, 110, 255, ${open * (0.10 + 0.05 * Math.sin(t * 2.6))})`;
+    ctx.fillRect(x - W / 2, y - H, W, H);
+  }
+  ctx.restore();
+
+  // Door leaves: oak planks + iron bands, hinged at the jambs. Each leaf
+  // swings away by shrinking toward its hinge as `open` runs 0 → 1.
+  if (open < 1) {
+    ctx.save();
+    ctx.clip(doorway);
+    for (const side of [-1, 1]) {
+      const w = (W / 2) * (1 - open);
+      const lx = side < 0 ? x - W / 2 : x + W / 2 - w;
+      ctx.fillStyle = '#5f4130';
+      ctx.fillRect(lx, y - H, w, H);
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.3)'; // plank seams
+      for (let i = 1; i < 3; i++) ctx.fillRect(lx + (w * i) / 3 - 0.75, y - H, 1.5, H);
+      ctx.fillStyle = '#39344b'; // iron bands
+      ctx.fillRect(lx, y - H * 0.78, w, 6);
+      ctx.fillRect(lx, y - H * 0.34, w, 6);
+      // Leading-edge catch-light so the pair reads as two doors.
+      ctx.fillStyle = 'rgba(255, 200, 140, 0.14)';
+      ctx.fillRect(side < 0 ? lx + w - 2 : lx, y - H, 2, H);
+    }
+    ctx.restore();
+  }
+
+  // Stone frame over everything, with a faint bevel inlay.
+  ctx.strokeStyle = '#4d4360';
+  ctx.lineWidth = 12;
+  ctx.stroke(doorway);
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.08)';
+  ctx.lineWidth = 3;
+  ctx.stroke(doorway);
+  ctx.fillStyle = '#3b3049'; // pillar feet
+  ctx.fillRect(x - W / 2 - 14, y - 8, 22, 14);
+  ctx.fillRect(x + W / 2 - 8, y - 8, 22, 14);
+
+  // Keystone skull (the tile's door emblem, perched on the arch).
+  const ky = y - H;
+  ctx.fillStyle = '#cfc3b0';
+  ctx.beginPath();
+  ctx.arc(x, ky - 2, 9, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillRect(x - 5, ky + 3, 10, 6);
+  ctx.fillStyle = '#1a1424';
+  ctx.beginPath();
+  ctx.arc(x - 3.5, ky - 3, 2.6, 0, Math.PI * 2);
+  ctx.arc(x + 3.5, ky - 3, 2.6, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillRect(x - 1, ky + 1, 2, 3); // nasal notch
+
+  // Light spilling onto the flagstones once open — beckons from afar.
+  if (open > 0) {
+    ctx.fillStyle = `rgba(150, 110, 255, ${0.09 * open})`;
+    ctx.beginPath();
+    ctx.ellipse(x, y + 8, W * 0.7, 18, 0, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
 // Game: master state machine + fixed-timestep loop -------------------
 class Game {
   constructor(canvas) {
@@ -364,8 +564,9 @@ class Game {
     this.STEP = 1 / 60; // fixed update step
   }
 
-  newWorld() {
+  newWorld(stage) {
     this.world = {
+      stage, // 1 | 2 — same rules for now; Stage 2 gets its own later
       player: new Player(CONFIG.worldWidth / 2, CONFIG.worldHeight / 2),
       enemies: [],
       projectiles: [],
@@ -378,10 +579,19 @@ class Game {
       kills: 0,
     };
     Progression.init(this.world.player);
+    // Juice state: deltas watched each update drive shake/flash/SFX, so
+    // combat code never needs a reference back into the game shell.
+    this._lastHp = this.world.player.health;
+    this._lastXp = 0;
+    this._lastKills = 0;
+    this._killSfxT = -1;
+    this._xpSfxT = -1;
+    this._shake = 0;
+    this._hurtFlash = 0;
   }
 
-  start() {
-    this.newWorld();
+  start(stage = 1) {
+    this.newWorld(stage);
     this.state = 'playing';
     Screens.hideAll(); // clear start / game-over / any leftover modal
     Hud.init();
@@ -391,6 +601,7 @@ class Game {
   frame(ts) {
     const dt = Math.min(0.25, (ts - this._last) / 1000) || 0;
     this._last = ts;
+    if (this._hurtFlash > 0) this._hurtFlash -= dt; // fades in real time
     if (this.state === 'playing') {
       this._acc += dt;
       // Re-check state each step: an update may open the level-up modal,
@@ -443,14 +654,54 @@ class Game {
     w.floaters = w.floaters.filter((f) => f.alive);
 
     if (Progression.checkLevelUp(w.player)) this.openLevelUp();
-    // Victory: the final wave has fully arrived and nothing is left alive.
-    // Checked before the death check so a mutual-kill frame goes to the player.
-    if (w.player.alive && w.spawner.finalWaveArrived && w.enemies.length === 0) {
-      this.victory();
-    } else if (!w.player.alive) {
-      this.gameOver();
+    // Victory goes through the Gate of Descent (spawned on the boss kill):
+    // the doors swing open as the player nears; stepping onto the stair
+    // in the doorway ends the stage — even with stragglers still alive.
+    if (w.gate && w.player.alive) {
+      const d = Vec.dist(w.player.x, w.player.y, w.gate.x, w.gate.y);
+      if (d < 170) w.gate.open = Math.min(1, w.gate.open + dt / 0.9);
+      if (w.gate.open >= 1 && d < 40) this.victory();
     }
+    if (!w.player.alive) this.gameOver();
     Camera.follow(w.player);
+
+    // Juice: react to what changed this tick (any damage source counts).
+    if (w.player.health < this._lastHp) {
+      Sfx.hurt();
+      this._shake = 0.25;
+      this._hurtFlash = 0.25;
+    }
+    this._lastHp = w.player.health;
+    // Kill / XP blips, throttled so a mowed-down horde doesn't clip audio.
+    if (w.kills > this._lastKills && w.time - this._killSfxT > 0.06) {
+      Sfx.kill();
+      this._killSfxT = w.time;
+    }
+    this._lastKills = w.kills;
+    if (w.player.xp > this._lastXp && w.time - this._xpSfxT > 0.05) {
+      Sfx.xp();
+      this._xpSfxT = w.time;
+    }
+    this._lastXp = w.player.xp;
+    // The dragon's entrance: one roar + a long rumble of the camera.
+    if (w.boss && !w.bossAnnounced) {
+      w.bossAnnounced = true;
+      Sfx.roar();
+      this._shake = 0.6;
+    }
+    // Fly-by cameo: same roar, shorter rumble (flag set by the spawner).
+    if (w.flybyRoar) {
+      w.flybyRoar = false;
+      Sfx.roar();
+      this._shake = 0.4;
+    }
+    // Screen shake: random camera offset that decays to nothing.
+    if (this._shake > 0) {
+      this._shake = Math.max(0, this._shake - dt);
+      const m = 24 * this._shake;
+      Camera.x += (Math.random() * 2 - 1) * m;
+      Camera.y += (Math.random() * 2 - 1) * m;
+    }
   }
 
   render() {
@@ -458,10 +709,20 @@ class Game {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     if (!this.world) return;
 
-    Arena.render(ctx, Camera);
+    Arena.render(ctx, Camera, this.world.stage);
 
     // Pickups lie flat on the floor — always drawn under standing actors.
     for (const k of this.world.pickups) k.render(ctx, Camera);
+
+    // The Gate of Descent (post-boss exit) stands on the floor plane.
+    if (this.world.gate) {
+      const g = this.world.gate;
+      const s = Camera.toScreen(g.x, g.y);
+      if (s.x > -160 && s.x < Camera.w + 160 &&
+          s.y > -160 && s.y < Camera.h + 160) {
+        drawGate(ctx, s.x, s.y, g.open, performance.now() / 1000);
+      }
+    }
 
     // The relic hovers over the altar pedestal from its unlock wave until
     // claimed, slowly spinning and bobbing so it beacons from a distance.
@@ -493,7 +754,8 @@ class Game {
     // and sell the gothic mood. Uses a multiply gradient with fully opaque
     // stops (transparent stops render inconsistently across canvas
     // implementations). Cached per canvas size.
-    if (!this._vignette || this._vignetteKey !== `${canvas.width}x${canvas.height}`) {
+    const vKey = `${canvas.width}x${canvas.height}s${this.world.stage}`;
+    if (!this._vignette || this._vignetteKey !== vKey) {
       // r0 = 0 with a doubled white stop: same look, but avoids the
       // inner-radius rendering bug some canvas implementations have.
       const g = ctx.createRadialGradient(
@@ -504,15 +766,22 @@ class Game {
                       (Math.hypot(canvas.width, canvas.height) * 0.6);
       g.addColorStop(0, '#ffffff');        // multiply by white = unchanged
       g.addColorStop(plateau, '#ffffff');  // flat center plateau
-      g.addColorStop(1, '#6f6a80');        // corners darken toward violet-grey
+      // Corners darken toward violet-grey in the crypt, mossy grey in the forest.
+      g.addColorStop(1, this.world.stage === 2 ? '#66785f' : '#6f6a80');
       this._vignette = g;
-      this._vignetteKey = `${canvas.width}x${canvas.height}`;
+      this._vignetteKey = vKey;
     }
     ctx.save();
     ctx.globalCompositeOperation = 'multiply';
     ctx.fillStyle = this._vignette;
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     ctx.restore();
+
+    // Hurt flash: a red wash over everything that fades out fast.
+    if (this._hurtFlash > 0) {
+      ctx.fillStyle = `rgba(255, 40, 60, ${0.28 * (this._hurtFlash / 0.25)})`;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+    }
 
     Hud.render(this.world);
 
@@ -541,6 +810,7 @@ class Game {
 
   openLevelUp() {
     this.state = 'levelup';
+    Sfx.levelup();
     LevelUp.open(Progression.rollChoices(3, this.world.player), (id) => {
       Progression.apply(this.world.player, id);
       Hud.syncAbilities(this.world.player); // sidebar reflects the new pick
@@ -560,6 +830,8 @@ class Game {
       Screens.hide('abilities');
       Screens.hide('menu-leaderboard');
       Screens.hide('settings');
+      Screens.hide('shop');
+      Screens.hide('stage');
       Screens.show('start');
     }
     // levelup / gameover / victory: Esc deliberately does nothing —
@@ -578,11 +850,15 @@ class Game {
 
   gameOver() { this._end(false); }
 
-  // GGs — dragon down, field clear on the final wave.
-  victory() { this._end(true); }
+  // GGs — the stair taken. Beating Stage 1 unlocks Stage 2 in the menu.
+  victory() {
+    if (this.world.stage === 1) Progress.unlockStage2();
+    this._end(true);
+  }
 
   _end(victory) {
     this.state = victory ? 'victory' : 'gameover';
+    if (victory) Sfx.victory(); else Sfx.defeat();
     const w = this.world;
     const base = (w.kills * 10 + Math.floor(w.time)) * 0.5 * w.player.level;
     const stats = {
@@ -616,8 +892,9 @@ function main() {
   Menu.init();        // start-menu panels (Abilities / Leaderboard)
   const game = new Game(canvas);
   Screens.bind({
-    onStart: () => game.start(),
-    onRestart: () => game.start(),
+    onStart: (stage) => game.start(stage),
+    // Play Again re-runs whatever stage just ended.
+    onRestart: () => game.start(game.world?.stage ?? 1),
     onExit: () => game.exitToMenu(),
   });
   addEventListener('keydown', (e) => {

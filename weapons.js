@@ -16,13 +16,15 @@
 import { CONFIG } from './config.js';
 import { Projectile, Boomerang } from './entities.js';
 import { Combat } from './systems.js';
+import { Sfx } from './audio.js';
 
 // Nearest living enemy to (x, y), optionally capped to maxDist.
+// Skips invulnerable ones (the fly-by dragon) — no wasting aim on them.
 function nearestEnemy(world, x, y, maxDist = Infinity) {
   let best = null;
   let bestD = maxDist * maxDist;
   for (const e of world.enemies) {
-    if (!e.alive) continue;
+    if (!e.alive || e.invulnerable) continue;
     const d = (e.x - x) ** 2 + (e.y - y) ** 2;
     if (d < bestD) { bestD = d; best = e; }
   }
@@ -64,6 +66,7 @@ export class RangedWeapon extends Weapon {
         player.stats.damage, player.stats.pierce || 0
       ));
     }
+    Sfx.shoot();
     return true;
   }
 }
@@ -83,14 +86,24 @@ export class MeleeWeapon extends Weapon {
     if (!target) return false; // stay ready until something is in reach
 
     const ang = Math.atan2(target.y - player.y, target.x - player.x);
-    const dmg = player.stats.damage * cfg.damageMul * (player.stats.meleeMul || 1);
+    // Ranged legacy: Piercing Shot stacks picked before the swap sharpen
+    // the blade permanently.
+    const legacy = 1 + (player.stats.pierce || 0) * cfg.pierceBonus;
+    const dmg = player.stats.damage * cfg.damageMul * (player.stats.meleeMul || 1) * legacy;
 
     this._slash(player, world, ang, dmg, 0);
+    // Ranged legacy: each Twin Shot level manifests a specter blade that
+    // repeats the slash a beat later at a fraction of its damage.
+    const specters = (player.stats.multishot || 1) - 1;
+    for (let i = 1; i <= specters; i++) {
+      this._slash(player, world, ang, dmg * cfg.specterMul, 0.06 * i);
+    }
     // Echo Slash: a spectral reverse slash covers the player's back,
     // a beat behind the main one so the two sweeps read separately.
     if (player.stats.echo) {
       this._slash(player, world, ang + Math.PI, dmg * cfg.echoMul, 0.09);
     }
+    Sfx.slash();
     return true;
   }
 
@@ -204,6 +217,7 @@ export class BoomerangPassive {
     if (this._cd > 0) return;
     this._cd = CONFIG.weapons.boomerang.cooldown;
     world.projectiles.push(new Boomerang(player, Math.random() * Math.PI * 2));
+    Sfx.boomerang();
   }
 }
 
@@ -230,6 +244,7 @@ export class NovaPassive {
       }
     }
     world.floaters.push(new NovaVFX(player.x, player.y, cfg.radius));
+    Sfx.nova();
   }
 }
 
@@ -272,6 +287,83 @@ export class NovaVFX {
       ctx.arc(s.x, s.y, r * lag, 0, Math.PI * 2);
       ctx.stroke();
     }
+    ctx.restore();
+  }
+}
+
+// Stormcall (epic passive) ---------------------------------------------
+// No-ops until stats.boltLevel is set by the upgrade. Every cooldown,
+// lightning strikes `targets` distinct random enemies; stacks add damage.
+export class BoltPassive {
+  constructor() { this._cd = 0; }
+
+  update(dt, player, world) {
+    const level = player.stats.boltLevel || 0;
+    if (level <= 0) return;
+    this._cd -= dt;
+    if (this._cd > 0) return;
+    const alive = world.enemies.filter((e) => e.alive && !e.invulnerable);
+    if (!alive.length) return; // stay armed until something exists
+
+    const cfg = CONFIG.weapons.bolt;
+    this._cd = cfg.cooldown;
+    const dmg = player.stats.damage * cfg.damageMul * level;
+    const strikes = Math.min(cfg.targets, alive.length);
+    for (let i = 0; i < strikes; i++) {
+      // splice = distinct targets per burst
+      const e = alive.splice(Math.floor(Math.random() * alive.length), 1)[0];
+      world.floaters.push(new BoltVFX(e.x, e.y));
+      Combat.damageEnemy(world, e, dmg);
+    }
+    Sfx.bolt();
+  }
+}
+
+const BOLT_LIFE = 0.22;
+
+export class BoltVFX {
+  constructor(x, y) {
+    this.x = x;
+    this.y = y;
+    this.life = BOLT_LIFE;
+    this.alive = true;
+    // Jagged strike path down from the sky, seeded once at creation so
+    // the bolt doesn't rewrite itself every frame.
+    this.pts = [];
+    const top = y - 340;
+    let px = x + (Math.random() * 2 - 1) * 30;
+    for (let i = 0; i < 6; i++) {
+      this.pts.push([px + (Math.random() * 2 - 1) * 26, top + (340 / 6) * i]);
+    }
+    this.pts.push([x, y]);
+  }
+
+  update(dt) {
+    this.life -= dt;
+    if (this.life <= 0) this.alive = false;
+  }
+
+  render(ctx, camera) {
+    const a = this.life / BOLT_LIFE;
+    ctx.save();
+    ctx.globalAlpha = a;
+    ctx.strokeStyle = '#eaf6ff';
+    ctx.lineWidth = 2.5;
+    ctx.lineJoin = 'round';
+    ctx.shadowColor = '#7bdfff';
+    ctx.shadowBlur = 12;
+    ctx.beginPath();
+    for (let i = 0; i < this.pts.length; i++) {
+      const s = camera.toScreen(this.pts[i][0], this.pts[i][1]);
+      i ? ctx.lineTo(s.x, s.y) : ctx.moveTo(s.x, s.y);
+    }
+    ctx.stroke();
+    // Impact flash at the struck enemy
+    const s = camera.toScreen(this.x, this.y);
+    ctx.fillStyle = '#eaf6ff';
+    ctx.beginPath();
+    ctx.arc(s.x, s.y, 12 * a, 0, Math.PI * 2);
+    ctx.fill();
     ctx.restore();
   }
 }

@@ -13,64 +13,26 @@
     - Pickup collection radius.
 */
 
-import { CONFIG, Settings, TILE, isTrapTile } from './config.js';
+import { CONFIG, Settings, TILE, isTrapTile, CHARACTERS, CHAR_LEGS, SHOP, Bank } from './config.js';
 import { Entity, FloatingText } from './entities.js';
-import { RangedWeapon, createWeapon, NovaPassive, BoomerangPassive } from './weapons.js';
+import { RangedWeapon, createWeapon, NovaPassive, BoomerangPassive, BoltPassive } from './weapons.js';
 
 // Body radius used for drawing/collision (pickupRadius is much larger and
 // only governs gem attraction, so we keep a separate visual radius).
 const PLAYER_RADIUS = 16;
 
-// Pixel sprite (matches "player design.jpg", which is a pixel-art sheet):
-// 12x19 cells drawn facing right, mirrored via `flip`. '.' = transparent.
-const PAL = {
-  H: '#1b2233', // hair (black-navy)
-  S: '#e9ddd2', // skin
-  E: '#6fe0ff', // eyes / amulet gem (redrawn with a glow pass)
-  M: '#223046', // face mask
-  C: '#262f4a', // coat
-  L: '#39486d', // sleeve highlight
-  B: '#3f6fd0', // belt
-  K: '#141b2e', // cape (trails behind)
-  P: '#1a2135', // pants
-  O: '#0d1320', // boots
-};
-const SPRITE_TORSO = [
-  '....HHHH....',
-  '..HHHHHHHH..',
-  '..HHHHHHHH..',
-  '.H.HHHHHH...',
-  '...HSSSSH...',
-  '...SESSES...',
-  '...MMMMMM...',
-  '....MMMM....',
-  '.K.CCECCC...',
-  '.KKCCCCCCC..',
-  'KKLCCCCCCL..',
-  'KKLCCBBCCL..',
-  '.KKCCCCCC...',
-  '.KCCCCCCC...',
-];
-const LEGS_STAND = [
-  '...PP..PP...',
-  '...PP..PP...',
-  '...PP..PP...',
-  '...OO..OO...',
-  '..OOO..OOO..',
-];
-const LEGS_STEP = [
-  '...PP..PP...',
-  '..PP....PP..',
-  '..PP....PP..',
-  '..OO....OO..',
-  '.OOO....OOO.',
-];
-
 export class Player extends Entity {
   constructor(x, y) {
     super(x, y, PLAYER_RADIUS);
-    // Clone base stats so upgrades never mutate the shared CONFIG object.
-    this.stats = { ...CONFIG.player };
+    // Sprite sheet + palette for the chosen character (Settings panel).
+    this.look = CHARACTERS[Settings.character] || CHARACTERS.hunter;
+    // Clone base stats so upgrades never mutate the shared CONFIG object;
+    // the character's stat identity layers on top, then bought shop levels.
+    this.stats = { ...CONFIG.player, ...(this.look.stats || {}) };
+    for (const item of SHOP) {
+      const lv = Bank.levelOf(item.id);
+      if (lv) item.apply(this.stats, lv);
+    }
     this.health = this.stats.maxHealth;
     this.level = 1;
     this.xp = 0;
@@ -78,6 +40,7 @@ export class Player extends Entity {
     this.weapon = new RangedWeapon(); // game starts with the og shooting
     this.nova = new NovaPassive();    // dormant until the Holy Nova upgrade
     this.boomerang = new BoomerangPassive(); // dormant until the altar relic
+    this.bolt = new BoltPassive();    // dormant until the Stormcall upgrade
     this.acquired = {};      // upgradeId -> times picked (pause menu reads this)
     this._hurtCd = 0;        // i-frame timer after taking contact damage
     this.facing = 0;         // radians, last movement direction
@@ -149,6 +112,7 @@ export class Player extends Entity {
     this.weapon.update(dt, this, world);
     this.nova.update(dt, this, world); // epic passive (no-op until unlocked)
     this.boomerang.update(dt, this, world); // altar relic (no-op until claimed)
+    this.bolt.update(dt, this, world); // epic passive (no-op until unlocked)
     // (leveling is owned by systems.js, not here)
   }
 
@@ -230,8 +194,9 @@ export class Player extends Entity {
 
     // Build this frame's cell grid: torso + whichever leg pose the stride
     // calls for (two-frame walk cycle, toggled by the step sine).
+    const PAL = this.look.pal;
     const stepping = this.moving && Math.sin(t * 9) > 0;
-    const rows = [...SPRITE_TORSO, ...(stepping ? LEGS_STEP : LEGS_STAND)];
+    const rows = [...this.look.torso, ...(stepping ? CHAR_LEGS.step : CHAR_LEGS.stand)];
     const cols = rows[0].length;
     const p = (r * 2.9) / rows.length;      // cell size; feet land on s.y
     const x0 = s.x - (cols * p) / 2;
@@ -240,9 +205,9 @@ export class Player extends Entity {
     // Void aura: a dark body-shaped blob with a blue glow shadow, drawn
     // under the sprite so the silhouette rims in blue flame.
     ctx.save();
-    ctx.shadowColor = 'rgba(80, 150, 255, 0.8)';
+    ctx.shadowColor = this.look.aura;
     ctx.shadowBlur = 13 + Math.sin(t * 3) * 3;
-    ctx.fillStyle = '#131a2c';
+    ctx.fillStyle = this.look.auraBody;
     ctx.beginPath();
     ctx.ellipse(s.x, y0 + rows.length * p * 0.52,
                 cols * p * 0.34, rows.length * p * 0.5, 0, 0, Math.PI * 2);
@@ -260,10 +225,10 @@ export class Player extends Entity {
       }
     }
 
-    // Glow pass: eyes + amulet gem burn ice-blue over the flat pixels.
+    // Glow pass: eyes + amulet gem burn in the character's accent color.
     ctx.save();
-    ctx.fillStyle = '#a5ecff';
-    ctx.shadowColor = '#3fc8ff';
+    ctx.fillStyle = this.look.glow.fill;
+    ctx.shadowColor = this.look.glow.shadow;
     ctx.shadowBlur = 3.5 + Math.sin(t * 4) * 1.5;
     for (let ry = 0; ry < rows.length; ry++) {
       const row = rows[ry];

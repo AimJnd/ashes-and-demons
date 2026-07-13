@@ -106,6 +106,15 @@ const ICONS = {
       <path d="M4.8 4.8 L7.3 7.3 M16.7 16.7 L19.2 19.2 M19.2 4.8 L16.7 7.3 M7.3 16.7 L4.8 19.2" stroke-width="1.3" opacity=".8"/></g>
     <circle cx="12" cy="12" r="4.6" fill="url(#gi-nova)"/>
     <circle cx="12" cy="12" r="6.4" fill="none" stroke="#ffe9a8" stroke-width=".9" opacity=".8"/>`),
+
+  // Stormcall: electric-blue strike from a storm halo
+  bolt: S(`<defs><linearGradient id="gi-bolt" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#eaf6ff"/><stop offset="1" stop-color="#7bdfff"/>
+    </linearGradient></defs>
+    <circle cx="12" cy="12" r="10.5" fill="#7bdfff" opacity=".15"/>
+    <circle cx="12" cy="12" r="9.6" fill="none" stroke="#7bdfff" stroke-width=".9" stroke-dasharray="2.2 3" opacity=".7"/>
+    <path fill="url(#gi-bolt)" d="M13.5 2.5 L5.5 13 H10.6 L9.2 21.5 L18.5 9.8 H12.8 Z"/>
+    <path fill="#fff" opacity=".55" d="M12.8 4.2 L7.6 11.2 H10.4 Z"/>`),
 };
 
 // Fallback so an upgrade added without art never breaks the UI.

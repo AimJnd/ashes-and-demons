@@ -29,6 +29,7 @@
       <div id="hud-wave"></div>
       <div id="hud-timer"></div>
       <div id="hud-kills"></div>
+      <div id="hud-gold"></div>
       <!-- Unlocked-abilities sidebar (icons + stack counts, right edge) -->
       <div id="hud-abilities"></div>
       <!-- Pause: clickable/tappable; the only interactive HUD element -->
@@ -89,6 +90,7 @@
       <nav class="main-menu">
         <button id="btn-start" class="menu-btn primary">Start Game</button>
         <button id="btn-abilities" class="menu-btn">Abilities</button>
+        <button id="btn-shop" class="menu-btn">Shop</button>
         <button id="btn-leaderboard" class="menu-btn">Leaderboard</button>
         <button id="btn-settings" class="menu-btn">Settings</button>
         <!--OTHER BUTTONS TO BE ADDED-->
@@ -98,11 +100,31 @@
       <footer class="credits">Developed by C&J</footer>
     </div>
 
+    <!-- Stage select (opened by Start Game; overlays the start menu).
+         Stage 2 unlocks after taking the gate stair past Stage 1's boss;
+         ui.js re-checks the lock each time the panel opens. -->
+    <div id="screen-stage" class="screen menu-panel hidden">
+      <h2>Start Game</h2>
+      <button id="btn-new-game" class="menu-btn primary">New Game</button>
+      <button id="btn-stage-1" class="menu-btn">Stage 1</button>
+      <button id="btn-stage-2" class="menu-btn">Stage 2</button>
+      <button id="btn-stage-back" class="menu-btn">Back</button>
+    </div>
+
     <!-- Abilities compendium (opened from the start menu; overlays it) -->
     <div id="screen-abilities" class="screen menu-panel hidden">
       <h2>Abilities</h2>
       <div id="abilities-cards"></div>
       <button id="btn-abilities-back" class="menu-btn">Back</button>
+    </div>
+
+    <!-- Shop (opened from the start menu; overlays it). Items are built
+         by ui.js from the SHOP catalog in config.js -->
+    <div id="screen-shop" class="screen menu-panel hidden">
+      <h2>Shop</h2>
+      <p id="shop-gold"></p>
+      <div id="shop-items"></div>
+      <button id="btn-shop-back" class="menu-btn">Back</button>
     </div>
 
     <!-- Leaderboard viewer (opened from the start menu; overlays it) -->
@@ -115,7 +137,19 @@
     <!-- Settings (opened from the start menu; overlays it) -->
     <div id="screen-settings" class="screen menu-panel hidden">
       <h2>Settings</h2>
-      <p>Movement controls</p>
+      <p>Character</p>
+      <!-- Previews are painted by ui.js from the CHARACTERS sprite data -->
+      <div class="char-row">
+        <button id="btn-char-hunter" class="menu-btn char-btn">
+          <canvas id="char-canvas-hunter" width="48" height="80"></canvas>Hunter
+          <span class="char-desc">Balanced</span>
+        </button>
+        <button id="btn-char-huntress" class="menu-btn char-btn">
+          <canvas id="char-canvas-huntress" width="48" height="80"></canvas>Huntress
+          <span class="char-desc">Fast · frail · piercing shots</span>
+        </button>
+      </div>
+      <p id="settings-movement-label">Movement controls</p>
       <button id="btn-controls-kb" class="menu-btn">Keyboard (WASD / Arrows)</button>
       <button id="btn-controls-mouse" class="menu-btn">Mouse (follow cursor)</button>
       <button id="btn-settings-back" class="menu-btn">Back</button>

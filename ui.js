@@ -4,7 +4,7 @@
   logic — it reflects state and reports user choices back via callbacks.
 */
 
-import { UPGRADES, Settings } from './config.js';
+import { UPGRADES, Settings, CHARACTERS, CHAR_LEGS, SHOP, Bank, shopCost, Progress, wipeProgress } from './config.js';
 import { icon } from './icons.js';
 
 const LEADERBOARD_KEY = 'exorcist_survival_scores';
@@ -20,6 +20,7 @@ export const Hud = {
       wave: document.getElementById('hud-wave'),
       timer: document.getElementById('hud-timer'),
       kills: document.getElementById('hud-kills'),
+      gold: document.getElementById('hud-gold'),
       abilities: document.getElementById('hud-abilities'),
     };
     if (this.el.abilities) this.el.abilities.innerHTML = ''; // fresh run
@@ -58,12 +59,13 @@ export const Hud = {
       : `Wave ${world.spawner.wave}`;
     this.el.timer.textContent = `${Math.floor(world.time)}s`;
     this.el.kills.textContent = `Kills ${world.kills}`;
+    this.el.gold.textContent = `Gold ${Bank.gold}`; // banked total, live
   },
 };
 
 // Screens: start / pause / game over ---------------------------------
 export const Screens = {
-  _ids: ['start', 'levelup', 'gameover', 'pause', 'abilities', 'menu-leaderboard', 'settings'],
+  _ids: ['start', 'stage', 'levelup', 'gameover', 'pause', 'abilities', 'menu-leaderboard', 'settings', 'shop'],
   show(id) {
     const el = document.getElementById(`screen-${id}`);
     if (el) el.classList.remove('hidden');
@@ -82,18 +84,31 @@ export const Screens = {
     if (title) title.textContent = victory ? 'VICTORY' : 'You Died';
     if (sub) {
       sub.textContent = victory
-        ? 'Ashmaw has fallen. The realm goes quiet. GGs.'
+        ? 'Ashmaw has fallen. The stair descends — Stage 2 unlocked. GGs.'
         : '';
     }
     this.show('gameover');
   },
-  // Wire start/restart/exit buttons; call provided handlers.
+  // Wire stage-select/restart/exit buttons; call provided handlers.
+  // onStart(stage) receives the chosen stage number. (btn-start itself
+  // only opens the stage submenu — wired in Menu.init.)
   bind({ onStart, onRestart, onExit }) {
-    const start = document.getElementById('btn-start');
+    if (onStart) {
+      // New Game is a full reset: wipe gold / shop / unlocks, then start
+      // Stage 1 fresh. Native confirm guards against a misclick.
+      document.getElementById('btn-new-game')?.addEventListener('click', () => {
+        if (!confirm('Start a New Game? All gold, shop upgrades and stage unlocks will be wiped.')) return;
+        wipeProgress();
+        onStart(1);
+      });
+      document.getElementById('btn-stage-1')?.addEventListener('click', () => onStart(1));
+      // Locked state is a disabled attribute (Menu.renderStages), so a
+      // click here always means the stage is available.
+      document.getElementById('btn-stage-2')?.addEventListener('click', () => onStart(2));
+    }
     const restart = document.getElementById('btn-restart');
     const exit = document.getElementById('btn-exit');
     const pauseQuit = document.getElementById('btn-pause-quit');
-    if (start && onStart) start.addEventListener('click', onStart);
     if (restart && onRestart) restart.addEventListener('click', onRestart);
     if (exit && onExit) exit.addEventListener('click', onExit);
     if (pauseQuit && onExit) pauseQuit.addEventListener('click', onExit);
@@ -305,6 +320,13 @@ export const Menu = {
       const el = document.getElementById(id);
       if (el) el.addEventListener('click', fn);
     };
+    // Start Game opens the stage submenu; the stage buttons themselves
+    // are bound to the game in Screens.bind.
+    wire('btn-start', () => {
+      this.renderStages();
+      Screens.hide('start'); Screens.show('stage');
+    });
+    wire('btn-stage-back', () => { Screens.show('start'); Screens.hide('stage'); });
     wire('btn-abilities', () => {
       this.renderAbilities();
       {Screens.hide('start');Screens.show('abilities');};
@@ -316,6 +338,11 @@ export const Menu = {
     });
     wire('btn-abilities-back',   () => {Screens.show('start') ; Screens.hide('abilities');});
     wire('btn-leaderboard-back', () => {Screens.show('start') ; Screens.hide('menu-leaderboard');});
+    wire('btn-shop', () => {
+      this.renderShop();
+      Screens.hide('start'); Screens.show('shop');
+    });
+    wire('btn-shop-back', () => { Screens.show('start'); Screens.hide('shop'); });
 
     // Settings panel: pick control scheme, highlight the active one.
     const markControls = () => {
@@ -329,6 +356,45 @@ export const Menu = {
     wire('btn-controls-kb',    () => { Settings.setControls('keyboard'); markControls(); });
     wire('btn-controls-mouse', () => { Settings.setControls('mouse');    markControls(); });
     wire('btn-settings-back',  () => { Screens.show('start'); Screens.hide('settings'); });
+
+    // Character select: paint each preview from the same sprite data the
+    // game renders with, and highlight the chosen one.
+    const paintChar = (canvasId, char) => {
+      const cv = document.getElementById(canvasId);
+      if (!cv) return;
+      const ctx = cv.getContext('2d');
+      const rows = [...char.torso, ...CHAR_LEGS.stand];
+      const cols = rows[0].length;
+      const p = Math.floor(Math.min(cv.width / cols, cv.height / rows.length));
+      const x0 = Math.floor((cv.width - cols * p) / 2);
+      const y0 = Math.floor((cv.height - rows.length * p) / 2);
+      for (let ry = 0; ry < rows.length; ry++) {
+        for (let cx = 0; cx < cols; cx++) {
+          const ch = rows[ry][cx];
+          if (ch === '.') continue;
+          ctx.fillStyle = char.pal[ch];
+          ctx.fillRect(x0 + cx * p, y0 + ry * p, p, p);
+        }
+      }
+    };
+    paintChar('char-canvas-hunter', CHARACTERS.hunter);
+    paintChar('char-canvas-huntress', CHARACTERS.huntress);
+    const markChar = () => {
+      document.getElementById('btn-char-hunter')?.classList.toggle('primary', Settings.character === 'hunter');
+      const hb = document.getElementById('btn-char-huntress');
+      hb?.classList.toggle('primary', Settings.character === 'huntress');
+      // Shop unlock: locked until bought (setCharacter refuses it anyway).
+      const owned = Bank.levelOf('huntress') > 0;
+      hb?.classList.toggle('locked', !owned);
+      const desc = hb?.querySelector('.char-desc');
+      if (desc) desc.textContent = owned
+        ? 'Fast · frail · piercing shots'
+        : '🔒 75 gold — unlock in the Shop';
+    };
+    this._markChar = markChar; // renderShop re-runs it after a purchase
+    wire('btn-char-hunter',   () => { Settings.setCharacter('hunter');   markChar(); });
+    wire('btn-char-huntress', () => { Settings.setCharacter('huntress'); markChar(); });
+    markChar();
 
     // Pause-menu controls toggle: one button that flips the scheme.
     // markControls keeps the start-menu settings panel in sync with it.
@@ -345,6 +411,52 @@ export const Menu = {
       markControls();
     });
     markPauseControls();
+  },
+
+  // Stage submenu: re-check the Stage 2 lock every time it opens, so a
+  // fresh victory unlocks it without a reload.
+  renderStages() {
+    const b = document.getElementById('btn-stage-2');
+    if (!b) return;
+    b.disabled = !Progress.stage2;
+    b.textContent = Progress.stage2 ? 'Stage 2' : '🔒 Stage 2 — slay Ashmaw';
+  },
+
+  // Build the shop from the SHOP catalog (config.js): gold balance on top,
+  // one row per item with its next-level cost. Re-rendered after every
+  // purchase so costs, levels and button states stay honest.
+  renderShop() {
+    const goldEl = document.getElementById('shop-gold');
+    if (goldEl) goldEl.textContent = `Gold: ${Bank.gold}`;
+    const box = document.getElementById('shop-items');
+    if (!box) return;
+    box.innerHTML = '';
+
+    for (const item of SHOP) {
+      const owned = Bank.levelOf(item.id);
+      const maxed = owned >= item.max;
+      const cost = shopCost(item, owned);
+
+      const row = document.createElement('div');
+      row.className = 'shop-item';
+      const lvl = item.max > 1
+        ? `<span class="shop-lvl">Lv ${owned}/${item.max}</span>`
+        : (owned ? '<span class="shop-lvl">Owned</span>' : '');
+      row.innerHTML = `<div class="shop-info"><h3>${item.name} ${lvl}</h3><p>${item.desc}</p></div>`;
+
+      const btn = document.createElement('button');
+      btn.className = 'menu-btn shop-buy';
+      btn.textContent = maxed ? (item.max > 1 ? 'Max' : 'Owned') : `${cost} gold`;
+      btn.disabled = maxed || Bank.gold < cost;
+      btn.addEventListener('click', () => {
+        if (Bank.buy(item)) {
+          this.renderShop();
+          this._markChar?.(); // huntress unlock reflects in Settings
+        }
+      });
+      row.appendChild(btn);
+      box.appendChild(row);
+    }
   },
 
   // Build the compendium from the live UPGRADES pool, grouped by tier,
