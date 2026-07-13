@@ -9,7 +9,7 @@ import { FloatingText, drawBoomerang } from './entities.js';
 import { Player } from './player.js';
 import { Spawner, Combat, Progression, Separation } from './systems.js';
 import { Hud, Screens, LevelUp, Leaderboard, Menu, PauseMenu } from './ui.js';
-import { Sfx } from './audio.js';
+import { Sfx, Music } from './audio.js';
 
 // Math helpers (merged from math.js) ---------------------------------
 export const Vec = {
@@ -252,12 +252,89 @@ const Arena = {
       const r = 38 + rand(i * 3) * 24;
       if (Vec.dist(x, y, cx, cy) < 260) continue;                 // spawn
       if (Vec.dist(x, y, CONFIG.altar.x, CONFIG.altar.y) < 200) continue;
-      if (this.RUNES.some((c) => Vec.dist(x, y, c.x, c.y) < c.r + r)) continue;
       if (isTrapTile(Math.floor(x / this.TILE), Math.floor(y / this.TILE))) continue;
       if (out.some((t) => Vec.dist(x, y, t.x, t.y) < t.r + r + 20)) continue;
       out.push({ x, y, r, seed: i });
     }
     return (this._trees = out);
+  },
+
+  // Stage 2 ground decor, seeded like the trees: mossy boulders, still
+  // puddles, and broken ruin walls — the forest-floor clutter from the
+  // reference sheets. Kept clear of spawn, altar, traps, and canopies.
+  decor() {
+    if (this._decor) return this._decor;
+    const rand = (n) => {
+      const v = Math.sin(n * 217.3 + 96.1) * 43758.5453;
+      return v - Math.floor(v);
+    };
+    const out = [];
+    const cx = CONFIG.worldWidth / 2, cy = CONFIG.worldHeight / 2;
+    const N = Math.round(CONFIG.worldWidth * CONFIG.worldHeight / 280000);
+    for (let i = 0; i < N * 6 && out.length < N; i++) {
+      const x = 100 + rand(i * 2) * (CONFIG.worldWidth - 200);
+      const y = 100 + rand(i * 2 + 1) * (CONFIG.worldHeight - 200);
+      if (Vec.dist(x, y, cx, cy) < 220) continue;
+      if (Vec.dist(x, y, CONFIG.altar.x, CONFIG.altar.y) < 180) continue;
+      if (isTrapTile(Math.floor(x / this.TILE), Math.floor(y / this.TILE))) continue;
+      if (this.trees().some((t) => Vec.dist(x, y, t.x, t.y) < t.r + 70)) continue;
+      if (out.some((o) => Vec.dist(x, y, o.x, o.y) < 130)) continue;
+      out.push({ x, y, kind: Math.floor(rand(i * 5 + 3) * 3), seed: i });
+    }
+    return (this._decor = out);
+  },
+
+  renderDecorItem(ctx, x, y, kind, seed, t) {
+    const rand = (n) => {
+      const v = Math.sin(seed * 53.7 + n * 31.9) * 43758.5453;
+      return v - Math.floor(v);
+    };
+    if (kind === 0) {
+      // Boulder cluster: 2-3 mossy grey stones with a lit crown.
+      for (let i = 0; i < 2 + (seed % 2); i++) {
+        const bx = x + (rand(i) - 0.5) * 46;
+        const by = y + (rand(i + 3) - 0.5) * 30;
+        const br = 12 + rand(i + 6) * 12;
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.3)';
+        ctx.beginPath(); ctx.ellipse(bx + 4, by + 5, br, br * 0.5, 0, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = i % 2 ? '#49514a' : '#3f463f';
+        ctx.beginPath(); ctx.ellipse(bx, by, br, br * 0.78, 0, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = 'rgba(180, 200, 160, 0.18)'; // moss catch-light
+        ctx.beginPath(); ctx.ellipse(bx - br * 0.25, by - br * 0.3, br * 0.5, br * 0.3, -0.4, 0, Math.PI * 2); ctx.fill();
+      }
+    } else if (kind === 1) {
+      // Still puddle: dark water with a rim and a drifting moon-glint.
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.25)';
+      ctx.beginPath(); ctx.ellipse(x, y + 3, 40, 20, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#132b30';
+      ctx.beginPath(); ctx.ellipse(x, y, 38, 18, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = 'rgba(120, 190, 170, 0.25)';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      ctx.fillStyle = `rgba(190, 230, 220, ${0.10 + Math.sin(t * 1.3 + seed) * 0.05})`;
+      ctx.beginPath();
+      ctx.ellipse(x - 10 + Math.sin(t * 0.5 + seed) * 4, y - 4, 10, 3.5, -0.3, 0, Math.PI * 2);
+      ctx.fill();
+    } else {
+      // Ruin: a broken wall stub of mossy blocks, one block tumbled off.
+      const blocks = 3 + (seed % 2);
+      for (let i = 0; i < blocks; i++) {
+        const bx = x + i * 24 - blocks * 12;
+        const bh = 14 + rand(i) * 10; // uneven broken top line
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.3)';
+        ctx.fillRect(bx + 3, y - bh + 4, 22, bh);
+        ctx.fillStyle = i % 2 ? '#4d544c' : '#565e54';
+        ctx.fillRect(bx, y - bh, 22, bh);
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.08)';
+        ctx.fillRect(bx, y - bh, 22, 3);
+        ctx.fillStyle = 'rgba(120, 170, 110, 0.2)'; // creeping moss
+        ctx.fillRect(bx, y - 5, 22, 5);
+      }
+      ctx.fillStyle = '#49514a'; // the tumbled block
+      ctx.fillRect(x + blocks * 12 + 6, y - 8, 18, 12);
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.25)';
+      ctx.fillRect(x + blocks * 12 + 6, y - 8, 18, 3);
+    }
   },
 
   // Top-down canopy like the reference sheets: hard shadow pooling
@@ -361,24 +438,31 @@ const Arena = {
       }
     }
 
-    // Forest canopies sit on the floor plane, under actors and runes.
+    const now = performance.now() / 1000;
     if (forest) {
+      // Forest-floor clutter first, then canopies over it.
+      for (const d of this.decor()) {
+        const s = camera.toScreen(d.x, d.y);
+        if (s.x < -100 || s.x > camera.w + 100 ||
+            s.y < -100 || s.y > camera.h + 100) continue;
+        this.renderDecorItem(ctx, s.x, s.y, d.kind, d.seed, now);
+      }
       for (const t of this.trees()) {
         const s = camera.toScreen(t.x, t.y);
         if (s.x < -t.r * 2 || s.x > camera.w + t.r * 2 ||
             s.y < -t.r * 2 || s.y > camera.h + t.r * 2) continue;
         this.renderTree(ctx, s.x, s.y, t.r, t.seed);
       }
+    } else {
+      // Blood runes (see "blood rune.webp"), each ringed with candles —
+      // the crypt's summoning circles. The forest floor stays natural.
+      this.RUNES.forEach((c, i) => {
+        const s = camera.toScreen(c.x, c.y);
+        if (s.x < -c.r - 60 || s.x > camera.w + c.r + 60 ||
+            s.y < -c.r - 60 || s.y > camera.h + c.r + 60) return;
+        this.renderBloodRune(ctx, s.x, s.y, c.r, i + 1, now);
+      });
     }
-
-    // Blood runes (see "blood rune.webp"), each ringed with candles.
-    const now = performance.now() / 1000;
-    this.RUNES.forEach((c, i) => {
-      const s = camera.toScreen(c.x, c.y);
-      if (s.x < -c.r - 60 || s.x > camera.w + c.r + 60 ||
-          s.y < -c.r - 60 || s.y > camera.h + c.r + 60) return;
-      this.renderBloodRune(ctx, s.x, s.y, c.r, i + 1, now);
-    });
 
     // Altar of the Crimson Relic: a raised dais with a rune ring and a
     // pedestal table — reads as a special spot from across the arena.
@@ -595,6 +679,7 @@ class Game {
     this.state = 'playing';
     Screens.hideAll(); // clear start / game-over / any leftover modal
     Hud.init();
+    Music.start(stage); // per-stage loop; the click satisfies autoplay rules
   }
 
   // Fixed-timestep accumulator loop.
@@ -811,11 +896,17 @@ class Game {
   openLevelUp() {
     this.state = 'levelup';
     Sfx.levelup();
-    LevelUp.open(Progression.rollChoices(3, this.world.player), (id) => {
-      Progression.apply(this.world.player, id);
-      Hud.syncAbilities(this.world.player); // sidebar reflects the new pick
+    const player = this.world.player;
+    // Stage 2 onward: each card can be swapped for gold. ui.js owns the
+    // button + the Bank charge; this just rolls the replacement.
+    const rerollOne = this.world.stage >= 2
+      ? (excludeIds) => Progression.rollChoices(1, player, excludeIds)[0] ?? null
+      : null;
+    LevelUp.open(Progression.rollChoices(3, player), (id) => {
+      Progression.apply(player, id);
+      Hud.syncAbilities(player); // sidebar reflects the new pick
       this.state = 'playing';
-    });
+    }, rerollOne);
   }
 
   // Esc: pause/resume during play; also closes start-menu panels.
@@ -843,6 +934,7 @@ class Game {
   exitToMenu() {
     this.state = 'start';
     this.world = null;
+    Music.stop();
     Screens.hideAll();
     Hud.hide();
     Screens.show('start');
@@ -858,6 +950,7 @@ class Game {
 
   _end(victory) {
     this.state = victory ? 'victory' : 'gameover';
+    Music.stop();
     if (victory) Sfx.victory(); else Sfx.defeat();
     const w = this.world;
     const base = (w.kills * 10 + Math.floor(w.time)) * 0.5 * w.player.level;
@@ -869,7 +962,7 @@ class Game {
       kills: w.kills,
       win: victory, // persisted to the leaderboard (crown marker)
     };
-    Screens.showEnd(victory);
+    Screens.showEnd(victory, w.stage);
     Leaderboard.show(stats); // render board + arm the save-score flow
   }
 }

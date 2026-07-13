@@ -103,6 +103,17 @@ export class Enemy extends Entity {
       case 'spitter': body = this._renderSpitter(ctx, s, t); break;
       default:        body = this._renderShade(ctx, s, t); break;
     }
+    // Elite: golden glow outline traced around the body silhouette.
+    if (this.elite && body) {
+      ctx.save();
+      ctx.strokeStyle = '#ffd166';
+      ctx.shadowColor = '#ffb347';
+      ctx.shadowBlur = 14;
+      ctx.lineWidth = 2.5;
+      ctx.globalAlpha = 0.75 + Math.sin(t * 5) * 0.2;
+      ctx.stroke(body);
+      ctx.restore();
+    }
     if (this._hitFlash > 0 && body) {
       ctx.save();
       ctx.globalAlpha = (this._hitFlash / ENEMY_FLASH) * 0.7;

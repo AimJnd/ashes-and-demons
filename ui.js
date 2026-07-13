@@ -4,7 +4,7 @@
   logic — it reflects state and reports user choices back via callbacks.
 */
 
-import { UPGRADES, Settings, CHARACTERS, CHAR_LEGS, SHOP, Bank, shopCost, Progress, wipeProgress } from './config.js';
+import { CONFIG, UPGRADES, Settings, CHARACTERS, CHAR_LEGS, SHOP, Bank, shopCost, Progress, wipeProgress } from './config.js';
 import { icon } from './icons.js';
 
 const LEADERBOARD_KEY = 'exorcist_survival_scores';
@@ -76,7 +76,7 @@ export const Screens = {
   },
   hideAll() { this._ids.forEach((id) => this.hide(id)); },
   // End screen doubles as defeat AND victory — swap title/tone and show.
-  showEnd(victory) {
+  showEnd(victory, stage = 1) {
     const screen = document.getElementById('screen-gameover');
     const title = document.getElementById('end-title');
     const sub = document.getElementById('end-subtitle');
@@ -84,7 +84,9 @@ export const Screens = {
     if (title) title.textContent = victory ? 'VICTORY' : 'You Died';
     if (sub) {
       sub.textContent = victory
-        ? 'Ashmaw has fallen. The stair descends — Stage 2 unlocked. GGs.'
+        ? (stage >= 2
+          ? 'The Serpent lies still. The dark forest falls silent. GGs.'
+          : 'Ashmaw has fallen. The stair descends — Stage 2 unlocked. GGs.')
         : '';
     }
     this.show('gameover');
@@ -118,25 +120,47 @@ export const Screens = {
 // Level-up modal -----------------------------------------------------
 export const LevelUp = {
   // Render the choice cards; call onPick(id) once the player picks one.
-  open(choices, onPick) {
+  // rerollOne (Stage 2+): fn(excludeIds) -> replacement upgrade or null.
+  // When given, each card grows a "Reroll (50g)" button; the charge and
+  // the re-render happen here, the roll itself belongs to Progression.
+  open(choices, onPick, rerollOne = null) {
     const container = document.getElementById('levelup-cards');
     const screen = document.getElementById('screen-levelup');
-    container.innerHTML = '';
 
-    for (const up of choices) {
-      const card = document.createElement('div');
-      // Tiered card designs: 'rare' (gold) and 'epic' (violet) upgrades
-      // get their own look + a tier tag; commons stay plain.
-      card.className = up.tier ? `card ${up.tier}` : 'card';
-      const tag = up.tier ? `<span class="tier-tag">${up.tier.toUpperCase()}</span>` : '';
-      card.innerHTML = `${tag}<div class="card-icon">${icon(up.id)}</div><h3>${up.name}</h3><p>${up.desc}</p>`;
-      card.addEventListener('click', () => {
-        screen.classList.add('hidden');
-        onPick(up.id);
-      }, { once: true });
-      container.appendChild(card);
-    }
+    const render = () => {
+      container.innerHTML = '';
+      choices.forEach((up, i) => {
+        const card = document.createElement('div');
+        // Tiered card designs: 'rare' (gold) and 'epic' (violet) upgrades
+        // get their own look + a tier tag; commons stay plain.
+        card.className = up.tier ? `card ${up.tier}` : 'card';
+        const tag = up.tier ? `<span class="tier-tag">${up.tier.toUpperCase()}</span>` : '';
+        card.innerHTML = `${tag}<div class="card-icon">${icon(up.id)}</div><h3>${up.name}</h3><p>${up.desc}</p>`;
+        card.addEventListener('click', () => {
+          screen.classList.add('hidden');
+          onPick(up.id);
+        }, { once: true });
+        if (rerollOne) {
+          const btn = document.createElement('button');
+          btn.className = 'reroll-btn';
+          btn.textContent = `Reroll (${CONFIG.rerollCost}g)`;
+          btn.disabled = Bank.gold < CONFIG.rerollCost;
+          btn.addEventListener('click', (e) => {
+            e.stopPropagation(); // don't pick the card being rerolled
+            if (Bank.gold < CONFIG.rerollCost) return;
+            const nu = rerollOne(choices.map((c) => c.id));
+            if (!nu) return; // pool exhausted — no charge, keep the card
+            Bank.addGold(-CONFIG.rerollCost);
+            choices[i] = nu;
+            render();
+          });
+          card.appendChild(btn);
+        }
+        container.appendChild(card);
+      });
+    };
 
+    render();
     screen.classList.remove('hidden');
   },
 };

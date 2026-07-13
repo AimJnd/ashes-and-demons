@@ -1,0 +1,4 @@
+# Local reference art / snapshots — not part of the game (all art is canvas-drawn)
+*.png
+*.webp
+*.zip

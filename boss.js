@@ -14,7 +14,7 @@
 */
 
 import { CONFIG } from './config.js';
-import { Entity, FloatingText } from './entities.js';
+import { Entity, FloatingText, Spit } from './entities.js';
 
 const TAU = Math.PI * 2;
 
@@ -146,6 +146,322 @@ export class SwipeVFX {
       ctx.stroke();
     }
     ctx.restore();
+  }
+}
+
+// Dash telegraph: the strike lane painted from the serpent to its marked
+// target while it coils. Sharpens over the windup, like SwipeTelegraph.
+export class DashTelegraph {
+  constructor(serpent, tx, ty, width, windup) {
+    this.serpent = serpent;
+    this.tx = tx;
+    this.ty = ty;
+    this.width = width;
+    this.maxLife = windup;
+    this.life = windup;
+    this.alive = true;
+  }
+
+  update(dt) {
+    this.life -= dt;
+    if (this.life <= 0 || !this.serpent.alive) this.alive = false;
+  }
+
+  render(ctx, camera) {
+    const s = camera.toScreen(this.serpent.x, this.serpent.y);
+    const e = camera.toScreen(this.tx, this.ty);
+    const grow = 1 - this.life / this.maxLife;
+    ctx.save();
+    ctx.lineCap = 'round';
+    ctx.globalAlpha = 0.10 + grow * 0.18;
+    ctx.strokeStyle = '#8fd63a';
+    ctx.lineWidth = this.width;
+    ctx.beginPath();
+    ctx.moveTo(s.x, s.y);
+    ctx.lineTo(e.x, e.y);
+    ctx.stroke();
+    ctx.globalAlpha = 0.45 + grow * 0.45;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(s.x, s.y);
+    ctx.lineTo(e.x, e.y);
+    ctx.stroke();
+    // Target ring where the head will land
+    ctx.beginPath();
+    ctx.arc(e.x, e.y, 26 + grow * 8, 0, TAU);
+    ctx.stroke();
+    ctx.restore();
+  }
+}
+
+// The Serpent (Stage 2 boss) ------------------------------------------------
+// A giant venom snake. Slithers after the player, spits glob fans at
+// range, and lunges: a telegraphed dash straight to the marked spot,
+// then an instant snap back to where it coiled. Quacks like an Enemy
+// (same duck-type contract as the Dragon above).
+export class Serpent extends Entity {
+  constructor(x, y) {
+    const cfg = CONFIG.boss2;
+    super(x, y, cfg.radius);
+    this.hp = cfg.hp;
+    this.maxHp = cfg.hp;
+    this.damage = cfg.contactDamage;
+    this.xp = cfg.xp;
+    this.isBoss = true;
+    this.flip = false;
+    this.state = 'arrive';   // arrive -> combat
+    this._hitFlash = 0;
+    this._venomCd = 0;
+    this._dashCd = 0;
+    this._windup = 0;        // > 0 while coiling for the lunge
+    this._dash = null;       // { t, dur, x0, y0, tx, ty, hit } mid-lunge
+    this._trail = [];        // recent head positions; the body follows them
+    this._spitFlash = 0;     // maw glow right after spitting
+  }
+
+  flash() { this._hitFlash = 0.08; }
+
+  _remember() {
+    const last = this._trail[0];
+    if (!last || (last[0] - this.x) ** 2 + (last[1] - this.y) ** 2 > 36) {
+      this._trail.unshift([this.x, this.y]);
+      if (this._trail.length > 40) this._trail.pop();
+    }
+  }
+
+  update(dt, player, world) {
+    if (this._hitFlash > 0) this._hitFlash -= dt;
+    if (this._spitFlash > 0) this._spitFlash -= dt;
+    const cfg = CONFIG.boss2;
+
+    const dx = player.x - this.x;
+    const dy = player.y - this.y;
+    const d = Math.hypot(dx, dy) || 1;
+    if (dx < 0) this.flip = true;
+    else if (dx > 0) this.flip = false;
+
+    // Slither in, then engage.
+    if (this.state === 'arrive') {
+      this.x += (dx / d) * cfg.arriveSpeed * dt;
+      this.y += (dy / d) * cfg.arriveSpeed * dt;
+      this._remember();
+      if (d < 420) {
+        this.state = 'combat';
+        this._venomCd = 1.2;
+        this._dashCd = 2.5;
+      }
+      return;
+    }
+
+    this._venomCd -= dt;
+    this._dashCd -= dt;
+
+    // Mid-lunge: fly down the lane, bite once if the player is caught,
+    // then snap back to the coil position the moment the head lands.
+    if (this._dash) {
+      const D = this._dash;
+      D.t += dt;
+      const f = Math.min(1, D.t / D.dur);
+      this.x = D.x0 + (D.tx - D.x0) * f;
+      this.y = D.y0 + (D.ty - D.y0) * f;
+      const hd = Math.hypot(player.x - this.x, player.y - this.y);
+      if (!D.hit && hd < this.radius + player.radius + 6) {
+        D.hit = true;
+        player.takeDamage(cfg.dash.damage);
+        player._hurtCd = 0.6;
+        world.floaters.push(new FloatingText(
+          player.x, player.y - player.radius * 1.6,
+          Math.round(cfg.dash.damage), { color: '#ff5555', size: 20 }
+        ));
+      }
+      if (f >= 1) {
+        // The snap back — the whole point of the move: strike and recoil.
+        this.x = D.x0;
+        this.y = D.y0;
+        this._trail.length = 0; // body reforms at the coil, not mid-lane
+        this._dash = null;
+        this._dashCd = cfg.dash.cooldown;
+      }
+      return;
+    }
+
+    // Coiling: rooted while the telegraph sharpens, then loose the lunge.
+    if (this._windup > 0) {
+      this._windup -= dt;
+      if (this._windup <= 0) {
+        this._dash = {
+          t: 0,
+          dur: Math.hypot(this._dashTx - this.x, this._dashTy - this.y) / cfg.dash.speed,
+          x0: this.x, y0: this.y,
+          tx: this._dashTx, ty: this._dashTy,
+          hit: false,
+        };
+      }
+      return;
+    }
+
+    // Pick the next action.
+    if (this._dashCd <= 0 && d <= cfg.dash.range && d > 120) {
+      // Mark the player's CURRENT spot — dodge by not being there.
+      this._dashTx = player.x;
+      this._dashTy = player.y;
+      this._windup = cfg.dash.windup;
+      world.floaters.push(new DashTelegraph(
+        this, this._dashTx, this._dashTy, this.radius * 1.6, cfg.dash.windup
+      ));
+    } else if (this._venomCd <= 0 && d <= cfg.venom.range) {
+      const v = cfg.venom;
+      const aim = Math.atan2(dy, dx);
+      for (let i = 0; i < v.count; i++) {
+        const a = aim + v.spread * (i / (v.count - 1) - 0.5);
+        world.hazards.push(new Spit(
+          this.x + Math.cos(a) * this.radius * 0.9,
+          this.y + Math.sin(a) * this.radius * 0.9,
+          Math.cos(a) * v.speed, Math.sin(a) * v.speed,
+          v.damage
+        ));
+      }
+      this._venomCd = v.cooldown;
+      this._spitFlash = 0.35;
+    } else {
+      // Slither: chase with a sideways sway so the body S-curves.
+      const t = performance.now() / 1000;
+      const px = -dy / d, py = dx / d; // perpendicular
+      const sway = Math.sin(t * 3.2) * 60;
+      this.x += ((dx / d) * cfg.speed + px * sway) * dt;
+      this.y += ((dy / d) * cfg.speed + py * sway) * dt;
+    }
+    this.x = Math.max(40, Math.min(CONFIG.worldWidth - 40, this.x));
+    this.y = Math.max(40, Math.min(CONFIG.worldHeight - 40, this.y));
+    this._remember();
+  }
+
+  render(ctx, camera) {
+    const s = camera.toScreen(this.x, this.y);
+    const t = performance.now() / 1000;
+    const r = this.radius;
+    const coiling = this._windup > 0;
+    const spitting = this._spitFlash > 0;
+
+    // Ground shadow under the head
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.3)';
+    ctx.beginPath(); ctx.ellipse(s.x, s.y + r * 0.35, r * 1.4, r * 0.5, 0, 0, TAU); ctx.fill();
+
+    // Body: tapered segments strung along the recorded trail.
+    const segs = 14;
+    for (let i = segs - 1; i >= 0; i--) {
+      const p = this._trail[Math.min(this._trail.length - 1, i * 2 + 2)];
+      if (!p) continue;
+      const b = camera.toScreen(p[0], p[1]);
+      const br = r * (0.85 - (i / segs) * 0.55);
+      ctx.fillStyle = i % 2 ? '#1d3a22' : '#26492c';
+      ctx.beginPath(); ctx.arc(b.x, b.y, br, 0, TAU); ctx.fill();
+      ctx.strokeStyle = 'rgba(143, 214, 58, 0.35)';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      // Pale belly stripe reads as scales
+      ctx.fillStyle = 'rgba(200, 220, 150, 0.12)';
+      ctx.beginPath(); ctx.arc(b.x, b.y + br * 0.3, br * 0.55, 0, TAU); ctx.fill();
+    }
+
+    // Head: broad viper wedge, reared up slightly while coiling.
+    const hr = r * (coiling ? 1.12 : 1);
+    const head = new Path2D();
+    head.moveTo(s.x - hr, s.y);
+    head.quadraticCurveTo(s.x - hr * 0.9, s.y - hr * 0.95, s.x, s.y - hr);
+    head.quadraticCurveTo(s.x + hr * 0.9, s.y - hr * 0.95, s.x + hr, s.y);
+    head.quadraticCurveTo(s.x + hr * 0.75, s.y + hr * 0.9, s.x, s.y + hr * 1.05);
+    head.quadraticCurveTo(s.x - hr * 0.75, s.y + hr * 0.9, s.x - hr, s.y);
+    head.closePath();
+    const g = ctx.createLinearGradient(s.x, s.y - hr, s.x, s.y + hr);
+    g.addColorStop(0, '#2e5a36');
+    g.addColorStop(1, '#152b19');
+    ctx.fillStyle = g;
+    ctx.fill(head);
+    ctx.strokeStyle = 'rgba(143, 214, 58, 0.6)';
+    ctx.lineWidth = 2.5;
+    ctx.stroke(head);
+
+    // Brow scales
+    ctx.strokeStyle = 'rgba(200, 230, 150, 0.3)';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(s.x - hr * 0.55, s.y - hr * 0.45);
+    ctx.quadraticCurveTo(s.x, s.y - hr * 0.7, s.x + hr * 0.55, s.y - hr * 0.45);
+    ctx.stroke();
+
+    // Eyes: venom-yellow slits that flare while coiling.
+    ctx.save();
+    ctx.fillStyle = coiling ? '#ffe24a' : '#d6e84a';
+    ctx.shadowColor = '#c8e83a';
+    ctx.shadowBlur = coiling ? 14 : 8;
+    for (const dd of [-1, 1]) {
+      ctx.beginPath();
+      ctx.ellipse(s.x + dd * hr * 0.42, s.y - hr * 0.18, hr * 0.13, hr * 0.22, 0, 0, TAU);
+      ctx.fill();
+    }
+    ctx.restore();
+    ctx.fillStyle = '#101a0c';
+    for (const dd of [-1, 1]) {
+      ctx.beginPath();
+      ctx.ellipse(s.x + dd * hr * 0.42, s.y - hr * 0.18, hr * 0.04, hr * 0.18, 0, 0, TAU);
+      ctx.fill();
+    }
+
+    // Maw: glows green while spitting; fangs below.
+    ctx.save();
+    ctx.fillStyle = spitting ? '#c9f45a' : '#3d6b2c';
+    ctx.shadowColor = '#8fd63a';
+    ctx.shadowBlur = spitting ? 16 : 5;
+    ctx.beginPath();
+    ctx.ellipse(s.x, s.y + hr * 0.55, hr * 0.4, hr * 0.18, 0, 0, TAU);
+    ctx.fill();
+    ctx.restore();
+    ctx.fillStyle = '#e8ddd0';
+    for (const o of [-0.28, 0.28]) {
+      ctx.beginPath();
+      ctx.moveTo(s.x + hr * o - 3, s.y + hr * 0.5);
+      ctx.lineTo(s.x + hr * o, s.y + hr * 0.78);
+      ctx.lineTo(s.x + hr * o + 3, s.y + hr * 0.5);
+      ctx.closePath(); ctx.fill();
+    }
+
+    // Forked tongue flick
+    if (Math.sin(t * 2.6) > 0.55 && !coiling) {
+      ctx.strokeStyle = '#ff5a6e';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(s.x, s.y + hr * 0.7);
+      ctx.lineTo(s.x, s.y + hr * 1.15);
+      ctx.moveTo(s.x, s.y + hr * 1.15);
+      ctx.lineTo(s.x - 4, s.y + hr * 1.3);
+      ctx.moveTo(s.x, s.y + hr * 1.15);
+      ctx.lineTo(s.x + 4, s.y + hr * 1.3);
+      ctx.stroke();
+    }
+
+    // Hit flash over the head mass
+    if (this._hitFlash > 0) {
+      ctx.save();
+      ctx.globalAlpha = (this._hitFlash / 0.08) * 0.5;
+      ctx.fillStyle = '#fff';
+      ctx.fill(head);
+      ctx.restore();
+    }
+
+    // Boss HP bar (same language as the Dragon's)
+    const bw = r * 3.4, bh = 7;
+    const bx = s.x - bw / 2, by = s.y - r * 2.4;
+    const frac = Math.max(0, this.hp / this.maxHp);
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.55)';
+    ctx.beginPath(); ctx.roundRect(bx - 1.5, by - 1.5, bw + 3, bh + 3, 4); ctx.fill();
+    ctx.fillStyle = '#0e2a12';
+    ctx.beginPath(); ctx.roundRect(bx, by, bw, bh, 3); ctx.fill();
+    ctx.fillStyle = '#8fd63a';
+    ctx.beginPath(); ctx.roundRect(bx, by, bw * frac, bh, 3); ctx.fill();
+    ctx.strokeStyle = 'rgba(180, 240, 100, 0.6)';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(bx, by, bw, bh);
   }
 }
 

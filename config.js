@@ -100,12 +100,26 @@ export const CONFIG = {
     waveInterval: 30,   // seconds between waves
     baseSpawnRate: 1.5, // enemies/sec at wave 1
     spawnRateGrowth: 0.15,
+    stage2SpawnMul: 1.2, // Stage 2 spawns a bit faster — the player arrives stronger
     hpScaling: 0.12,    // per-wave multiplier add-ons
     damageScaling: 0.05,    //contact damage
     speedScaling: 0.04,
     finalWave: 15,      // boss wave: regular spawning stops, the dragon arrives
     wyvernEscort: 30,   // wyverns that fly in alongside the dragon
   },
+
+  // Elite mobs: every N kills the next regular spawn comes out oversized,
+  // glowing, and carrying a guaranteed gold purse.
+  elite: {
+    every: 25,
+    hpMul: 5,
+    sizeMul: 1.5,
+    goldMin: 10,
+    goldMax: 15,
+  },
+
+  // Level-up reroll (Stage 2 onward): swap one offered upgrade for gold.
+  rerollCost: 50,
 
   // Final boss (consumed by boss.js). Tuned to be a real fight: the dragon
   // is fast enough that pure kiting fails, firebreath punishes standing
@@ -143,6 +157,34 @@ export const CONFIG = {
       damage: 38,
       windup: 0.75,        // telegraph time before the swipe lands
       cooldown: 4,
+    },
+  },
+
+  // Stage 2 boss (boss.js: Serpent). A giant venom snake: spits glob
+  // fans at range, and lunges — a telegraphed dash straight to the
+  // player's marked position, then snaps back to where it coiled.
+  boss2: {
+    hp: 3200,
+    radius: 40,            // head radius (the hittable body)
+    speed: 95,             // slither chase speed
+    arriveSpeed: 280,
+    contactDamage: 14,
+    xp: 60,
+    gold: 120,
+    venom: {
+      cooldown: 4,         // seconds between spit fans
+      range: 620,          // only spits when player is within this
+      count: 5,            // globs per fan
+      spread: (44 * Math.PI) / 180,
+      speed: 320,
+      damage: 14,          // per glob
+    },
+    dash: {
+      range: 560,          // lunges when player is within this
+      windup: 0.85,        // telegraph time — the beam shows the lane
+      speed: 1500,         // lunge travel speed
+      damage: 34,          // one hit if caught in the lane
+      cooldown: 5,
     },
   },
 };

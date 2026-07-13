@@ -6,7 +6,7 @@
 
 import { CONFIG, ENEMIES, UPGRADES, Bank } from './config.js';
 import { Enemy, Projectile, Pickup, FloatingText, Burst } from './entities.js';
-import { Dragon } from './boss.js';
+import { Dragon, Serpent } from './boss.js';
 
 // Spawner / difficulty director -------------------------------------
 export class Spawner {
@@ -18,6 +18,7 @@ export class Spawner {
     this._wyvernQueue = 0;      // escort still waiting to fly in
     this._wyvernTimer = 0;
     this._flybyWave = CONFIG.boss.flyby.every; // next dragon cameo wave
+    this._nextElite = CONFIG.elite.every;      // kill count for the next elite
   }
 
   update(dt, world) {
@@ -30,8 +31,10 @@ export class Spawner {
     );
 
     // Dragon fly-by every N waves before the real fight — a taste of the
-    // boss: untouchable, strafing fire, trampling the horde.
-    if (this.wave >= this._flybyWave && this.wave < CONFIG.waves.finalWave) {
+    // boss: untouchable, strafing fire, trampling the horde. Stage 1
+    // only: Ashmaw is that stage's boss; the serpent doesn't fly.
+    if ((world.stage ?? 1) === 1 &&
+        this.wave >= this._flybyWave && this.wave < CONFIG.waves.finalWave) {
       this._flybyWave += CONFIG.boss.flyby.every;
       this._spawnFlyby(world);
     }
@@ -52,7 +55,8 @@ export class Spawner {
     }
 
     // Spawn rate grows each wave; accumulate fractional spawns.
-    const rate = CONFIG.waves.baseSpawnRate + (this.wave - 1) * CONFIG.waves.spawnRateGrowth;
+    let rate = CONFIG.waves.baseSpawnRate + (this.wave - 1) * CONFIG.waves.spawnRateGrowth;
+    if (world.stage >= 2) rate *= CONFIG.waves.stage2SpawnMul;
     this._spawnAccumulator += dt * rate;
     while (this._spawnAccumulator >= 1) {
       this._spawnAccumulator -= 1;
@@ -84,9 +88,11 @@ export class Spawner {
     this.bossSpawned = true;
     const player = world.player;
 
-    // The dragon flies in from well off-screen at a random bearing.
+    // The boss closes in from well off-screen at a random bearing:
+    // Stage 1 gets the dragon, Stage 2 the venom serpent.
     const ang = Math.random() * Math.PI * 2;
-    const boss = new Dragon(
+    const Boss = world.stage >= 2 ? Serpent : Dragon;
+    const boss = new Boss(
       player.x + Math.cos(ang) * 1200,
       player.y + Math.sin(ang) * 1200
     );
@@ -94,7 +100,7 @@ export class Spawner {
     world.enemies.push(boss);
 
     this._wyvernQueue = CONFIG.waves.wyvernEscort;
-    this._wyvernTimer = 0.8; // a beat after the dragon appears
+    this._wyvernTimer = 0.8; // a beat after the boss appears
   }
 
   spawnEnemy(world, forcedType) {
@@ -108,22 +114,45 @@ export class Spawner {
     x = Math.max(20, Math.min(CONFIG.worldWidth - 20, x));
     y = Math.max(20, Math.min(CONFIG.worldHeight - 20, y));
 
-    const e = new Enemy(x, y, forcedType ?? this._pickType());
+    const e = new Enemy(x, y, forcedType ?? this._pickType(world.stage));
 
     // Per-wave scaling on the instance (shared defs stay untouched).
-    // Wyverns spawn at their config stats — the fight is tuned directly.
+    // Escort wyverns spawn at config stats — that fight is tuned directly.
     if (!forcedType) {
       const hpMul = 1 + (this.wave - 1) * CONFIG.waves.hpScaling;
       const spMul = 1 + (this.wave - 1) * CONFIG.waves.speedScaling;
       e.hp *= hpMul;
       e.maxHp = e.hp;
       e.speed *= spMul;
+
+      // Elite: every N kills the next spawn comes out oversized and
+      // glowing, with a guaranteed gold purse (Combat pays it out).
+      if (world.kills >= this._nextElite) {
+        this._nextElite += CONFIG.elite.every;
+        const el = CONFIG.elite;
+        e.elite = true;
+        e.hp *= el.hpMul;
+        e.maxHp = e.hp;
+        e.radius *= el.sizeMul;
+        e.eliteGold = el.goldMin +
+          Math.floor(Math.random() * (el.goldMax - el.goldMin + 1));
+      }
     }
 
     world.enemies.push(e);
   }
 
-  _pickType() {
+  _pickType(stage) {
+    // Stage 2 remix: no shades — wyverns are the bread-and-butter
+    // chaser (their share ramps up by wave so wave 1 doesn't maul you),
+    // and spitters show up early and often.
+    if (stage >= 2) {
+      if (this.wave >= 3 && Math.random() < 0.2) return 'spitter';
+      const r = Math.random();
+      if (this.wave >= 4 && r < 0.18) return 'brute';
+      if (r < Math.min(0.68, 0.32 + this.wave * 0.04)) return 'wyvern';
+      return 'swarm';
+    }
     // Spitters join from wave 8 — a separate roll so the existing mix
     // keeps its proportions.
     if (this.wave >= 8 && Math.random() < 0.12) return 'spitter';
@@ -283,6 +312,9 @@ export const Combat = {
           world.gate.x, world.gate.y - 150, 'A GATE RISES...',
           { color: '#c9a0ff', size: 20, life: 2 }
         ));
+      } else if (e.elite) {
+        // Elites always pay out — that's the whole point of hunting them.
+        world.pickups.push(new Pickup(e.x - 12, e.y, 'gold', e.eliteGold));
       } else if (Math.random() < CONFIG.drops.goldChance) {
         world.pickups.push(new Pickup(e.x - 12, e.y, 'gold', e.def?.gold || 1));
       }
@@ -396,8 +428,12 @@ export const Progression = {
   //   weight:   relative roll chance (default 1; rare upgrades use < 1)
   //   requires: fn(player) gate — hides options that don't apply
   //             (e.g. Spirit Blade once owned, pierce after going melee)
-  rollChoices(count = 3, player) {
-    const pool = UPGRADES.filter((u) => !u.requires || !player || u.requires(player));
+  // excludeIds: upgrades already on offer (used by the Stage 2 reroll so
+  // a rerolled card can't duplicate one of the other options).
+  rollChoices(count = 3, player, excludeIds = []) {
+    const pool = UPGRADES.filter((u) =>
+      !excludeIds.includes(u.id) &&
+      (!u.requires || !player || u.requires(player)));
     const out = [];
     while (out.length < count && pool.length) {
       // Weighted pick without replacement.
