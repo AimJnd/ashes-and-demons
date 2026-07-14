@@ -112,6 +112,35 @@ html, body {
 .ring-inner { animation: ring-spin 45s linear infinite reverse; opacity: 0.75; }
 @keyframes ring-spin { to { transform: rotate(360deg); } }
 
+/* Ghost shopkeeper: spectral merchant drifting at the lower left; the
+   whole thing is a button — clicking him opens the Shop. */
+#ghost-shopkeeper {
+  position: absolute;
+  left: 16px;
+  bottom: 36px; /* clears the credits line */
+  width: min(140px, 20vw);
+  padding: 0;
+  background: none;
+  border: none;
+  cursor: pointer;
+  z-index: 2;
+  filter: drop-shadow(0 0 16px rgba(160, 200, 255, 0.35));
+  transition: transform 0.15s ease, filter 0.15s ease;
+}
+#ghost-shopkeeper:hover {
+  transform: scale(1.08);
+  filter: drop-shadow(0 0 22px rgba(160, 200, 255, 0.6));
+}
+#ghost-shopkeeper svg { width: 100%; display: block; animation: ghost-bob 4.5s ease-in-out infinite; }
+.ghost-body { fill: rgba(205, 228, 255, 0.8); }
+.ghost-eye { fill: #16101f; }
+.ghost-purse { fill: #ffd166; stroke: #8a5a00; stroke-width: 2; }
+.ghost-purse-tie { fill: none; stroke: #8a5a00; stroke-width: 2; stroke-linecap: round; }
+@keyframes ghost-bob {
+  0%, 100% { transform: translateY(0); }
+  50%      { transform: translateY(-10px); }
+}
+
 /* The demon: horned silhouette rising out of the lava glow */
 .demon {
   position: absolute;
@@ -517,6 +546,11 @@ html, body {
 /* Level-up cards ---------------------------------------------------- */
 #levelup-cards { display: flex; gap: 1rem; }
 
+/* Column wrapper: card on top, reroll button below it (kept outside the
+   card so picking an upgrade can't fat-finger the reroll). */
+.card-col { display: flex; flex-direction: column; }
+.card-col .card { flex: 1; }
+
 /* Upgrade/ability cards — shared between the level-up modal and the
    Abilities compendium so both always look identical. */
 .card {
@@ -536,7 +570,7 @@ html, body {
 .card h3 { margin-bottom: 0.5rem; color: var(--accent); }
 .card p { font-size: 0.9rem; opacity: 0.85; }
 
-/* Reroll (Stage 2+): swap this card's offer for gold */
+/* Reroll: swap this card's offer for gold */
 .reroll-btn {
   display: block;
   width: 100%;
@@ -834,6 +868,7 @@ html, body {
     gap: 0.6rem;
     width: min(340px, 90vw);
   }
+  #levelup-cards .card-col { width: 100%; }
   #levelup-cards .card { width: 100%; padding: 0.9rem; }
   #screen-levelup { overflow-y: auto; }
   #hud { padding-right: 3.8rem; }
@@ -864,6 +899,7 @@ html, body {
 @media (prefers-reduced-motion: reduce) {
   .ember, .ring-outer, .ring-inner, .demon-eye,
   .game-title, .title-block, .title-block::after,
+  #ghost-shopkeeper svg,
   .main-menu .menu-btn, .card.rare, .card.epic {
     animation: none !important;
   }

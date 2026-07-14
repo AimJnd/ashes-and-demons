@@ -118,7 +118,7 @@ export const CONFIG = {
     goldMax: 15,
   },
 
-  // Level-up reroll (Stage 2 onward): swap one offered upgrade for gold.
+  // Level-up reroll: swap one offered upgrade for gold.
   rerollCost: 50,
 
   // Final boss (consumed by boss.js). Tuned to be a real fight: the dragon
@@ -247,11 +247,12 @@ export const UPGRADES = [
     requires: (p) => p.hasWeapon('melee') && !p.stats.echo,
     effect: (p) => { p.stats.echo = true; } },
   // Vampiric Rites — lifesteal on ALL damage dealt (any weapon, nova too).
-  { id: 'lifesteal', name: 'Vampiric Rites', tier: 'rare', weight: 0.25,
-    desc: 'Heal 6% of all damage you deal (stacks up to 18%)',
-    note: 'Stacks ×3',
-    requires: (p) => (p.stats.lifesteal || 0) < 0.18,
-    effect: (p) => { p.stats.lifesteal = (p.stats.lifesteal || 0) + 0.06; } },
+  // Shelved for now; uncomment to bring it back (combat hook + icon still live).
+  // { id: 'lifesteal', name: 'Vampiric Rites', tier: 'rare', weight: 0.25,
+  //   desc: 'Heal 6% of all damage you deal (stacks up to 18%)',
+  //   note: 'Stacks ×3',
+  //   requires: (p) => (p.stats.lifesteal || 0) < 0.18,
+  //   effect: (p) => { p.stats.lifesteal = (p.stats.lifesteal || 0) + 0.06; } },
 
   // Epics ------------------------------------------------------------------
   // Chrono Field — permanent slow aura around the player.
@@ -402,9 +403,9 @@ export const SHOP = [
   { id: 'g_hp',     name: 'Iron Constitution', desc: '+10 max health per level',   base: 150, max: 5, apply: (s, lv) => { s.maxHealth += 10 * lv; } },
   { id: 'g_speed',  name: 'Swift Boots',    desc: '+10 move speed per level',      base: 120,  max: 5, apply: (s, lv) => { s.speed += 10 * lv; } },
   { id: 'g_rate',   name: 'Talisman Focus', desc: '+0.2 shots/sec per level',      base: 150, max: 5, apply: (s, lv) => { s.fireRate += 0.2 * lv; } },
-  { id: 'g_proj',   name: 'Spirit Winds',   desc: '+60 projectile speed per level', base: 120, max: 3, apply: (s, lv) => { s.projectileSpeed += 60 * lv; } },
+  { id: 'g_proj',   name: 'Spirit Winds',   desc: '+12.5% projectile speed per level', base: 120, max: 3, apply: (s, lv) => { s.projectileSpeed += 60 * lv; } },
   { id: 'g_pierce', name: 'Ghost Shots',    desc: 'Shots pierce +1 foe per level', base: 500, max: 2, apply: (s, lv) => { s.pierce = (s.pierce || 0) + lv; } },
-  { id: 'huntress', name: 'The Huntress',   desc: 'Unlock The Huntress character', base: 250, max: 1, apply: () => {} },
+  { id: 'huntress', name: 'Huntress',   desc: 'Unlock the Huntress character', base: 250, max: 1, apply: () => {} },
 ];
 export const shopCost = (item, owned) => item.base * (owned + 1);
 
@@ -434,9 +435,15 @@ export const Bank = {
 // player takes the stair through the Gate of Descent.
 export const Progress = {
   stage2: store?.getItem('ws_stage2') === '1',
+  // Crimson Boomerang: once claimed at the altar, every later run starts with it.
+  boomerang: store?.getItem('ws_boomerang') === '1',
   unlockStage2() {
     this.stage2 = true;
     store?.setItem('ws_stage2', '1');
+  },
+  unlockBoomerang() {
+    this.boomerang = true;
+    store?.setItem('ws_boomerang', '1');
   },
 };
 
@@ -447,7 +454,8 @@ export function wipeProgress() {
   Bank.gold = 0;
   Bank.levels = {};
   Progress.stage2 = false;
-  for (const k of ['ws_gold', 'ws_shop', 'ws_stage2']) store?.removeItem(k);
+  Progress.boomerang = false;
+  for (const k of ['ws_gold', 'ws_shop', 'ws_stage2', 'ws_boomerang']) store?.removeItem(k);
   Settings.setCharacter('hunter'); // the Huntress is locked again
 }
 

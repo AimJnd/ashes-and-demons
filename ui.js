@@ -120,7 +120,7 @@ export const Screens = {
 // Level-up modal -----------------------------------------------------
 export const LevelUp = {
   // Render the choice cards; call onPick(id) once the player picks one.
-  // rerollOne (Stage 2+): fn(excludeIds) -> replacement upgrade or null.
+  // rerollOne: fn(excludeIds) -> replacement upgrade or null.
   // When given, each card grows a "Reroll (50g)" button; the charge and
   // the re-render happen here, the roll itself belongs to Progression.
   open(choices, onPick, rerollOne = null) {
@@ -140,13 +140,17 @@ export const LevelUp = {
           screen.classList.add('hidden');
           onPick(up.id);
         }, { once: true });
+        // Card + reroll button live in a column so the button sits below
+        // the card, out of the way of an eager pick-click.
+        const col = document.createElement('div');
+        col.className = 'card-col';
+        col.appendChild(card);
         if (rerollOne) {
           const btn = document.createElement('button');
           btn.className = 'reroll-btn';
           btn.textContent = `Reroll (${CONFIG.rerollCost}g)`;
           btn.disabled = Bank.gold < CONFIG.rerollCost;
-          btn.addEventListener('click', (e) => {
-            e.stopPropagation(); // don't pick the card being rerolled
+          btn.addEventListener('click', () => {
             if (Bank.gold < CONFIG.rerollCost) return;
             const nu = rerollOne(choices.map((c) => c.id));
             if (!nu) return; // pool exhausted — no charge, keep the card
@@ -154,9 +158,9 @@ export const LevelUp = {
             choices[i] = nu;
             render();
           });
-          card.appendChild(btn);
+          col.appendChild(btn);
         }
-        container.appendChild(card);
+        container.appendChild(col);
       });
     };
 
@@ -362,10 +366,12 @@ export const Menu = {
     });
     wire('btn-abilities-back',   () => {Screens.show('start') ; Screens.hide('abilities');});
     wire('btn-leaderboard-back', () => {Screens.show('start') ; Screens.hide('menu-leaderboard');});
-    wire('btn-shop', () => {
+    const openShop = () => {
       this.renderShop();
       Screens.hide('start'); Screens.show('shop');
-    });
+    };
+    wire('btn-shop', openShop);
+    wire('ghost-shopkeeper', openShop); // the spectral merchant sells too
     wire('btn-shop-back', () => { Screens.show('start'); Screens.hide('shop'); });
 
     // Settings panel: pick control scheme, highlight the active one.
@@ -413,7 +419,7 @@ export const Menu = {
       const desc = hb?.querySelector('.char-desc');
       if (desc) desc.textContent = owned
         ? 'Fast · frail · piercing shots'
-        : '🔒 75 gold — unlock in the Shop';
+        : '🔒 250 gold — unlock in the Shop';
     };
     this._markChar = markChar; // renderShop re-runs it after a purchase
     wire('btn-char-hunter',   () => { Settings.setCharacter('hunter');   markChar(); });

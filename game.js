@@ -73,6 +73,7 @@ const Input = {
 // Camera (merged from camera.js) — world->screen, follows player ------
 const Camera = {
   x: 0, y: 0, w: 0, h: 0,
+  zoom: 1, // canvas px per CSS px: >1 on touch devices = wider world view
   follow(target) {
     // Center on target, then clamp so we never show outside the arena.
     this.x = Vec.clamp(target.x - this.w / 2, 0, Math.max(0, CONFIG.worldWidth - this.w));
@@ -637,6 +638,14 @@ function drawGate(ctx, x, y, open, t) {
 }
 
 // Game: master state machine + fixed-timestep loop -------------------
+// Compact an entity array in place, keeping only the living —
+// avoids allocating five fresh arrays every frame.
+function cullDead(arr) {
+  let n = 0;
+  for (const e of arr) if (e.alive) arr[n++] = e;
+  arr.length = n;
+}
+
 class Game {
   constructor(canvas) {
     this.canvas = canvas;
@@ -662,6 +671,12 @@ class Game {
       time: 0,
       kills: 0,
     };
+    // Claimed the Crimson Boomerang in a past run: start armed, and mark
+    // the altar claimed so the relic never re-materializes on the dais.
+    if (Progress.boomerang) {
+      this.world.player.stats.boomerang = true;
+      this.world.altarClaimed = true;
+    }
     Progression.init(this.world.player);
     // Juice state: deltas watched each update drive shake/flash/SFX, so
     // combat code never needs a reference back into the game shell.
@@ -706,8 +721,8 @@ class Game {
     const w = this.world;
     w.time += dt;
     // Mouse in world coords (screen + camera) for mouse-follow movement.
-    Input.mouseWorldX = Input.mouse.x + Camera.x;
-    Input.mouseWorldY = Input.mouse.y + Camera.y;
+    Input.mouseWorldX = Input.mouse.x * Camera.zoom + Camera.x;
+    Input.mouseWorldY = Input.mouse.y * Camera.zoom + Camera.y;
     w.player.update(dt, Input, w);
 
     // Altar relic: materializes at the unlock wave; step onto the dais
@@ -717,6 +732,8 @@ class Game {
         Vec.dist(w.player.x, w.player.y, CONFIG.altar.x, CONFIG.altar.y) < 60) {
       w.altarClaimed = true;
       w.player.stats.boomerang = true;
+      // Not permanent yet — Combat makes it stick if the dragon falls
+      // while you hold it (claim + boss kill in the same run).
       w.floaters.push(new FloatingText(
         CONFIG.altar.x, CONFIG.altar.y - 90,
         'CRIMSON BOOMERANG!', { color: '#ff3b5c', size: 20, life: 1.6 }
@@ -732,11 +749,11 @@ class Game {
     for (const f of w.floaters)    f.update(dt);
 
     // Cull the dead so arrays don't grow unbounded.
-    w.enemies = w.enemies.filter((e) => e.alive);
-    w.projectiles = w.projectiles.filter((p) => p.alive);
-    w.hazards = w.hazards.filter((h) => h.alive);
-    w.pickups = w.pickups.filter((k) => k.alive);
-    w.floaters = w.floaters.filter((f) => f.alive);
+    cullDead(w.enemies);
+    cullDead(w.projectiles);
+    cullDead(w.hazards);
+    cullDead(w.pickups);
+    cullDead(w.floaters);
 
     if (Progression.checkLevelUp(w.player)) this.openLevelUp();
     // Victory goes through the Gate of Descent (spawned on the boss kill):
@@ -879,6 +896,9 @@ class Game {
       const len = Math.hypot(dx, dy) || 1;
       const k = Math.min(len, R);
       ctx.save();
+      // Joystick coords are CSS pixels; scale the whole overlay so the
+      // ring keeps its on-screen size regardless of the zoom-out.
+      ctx.scale(Camera.zoom, Camera.zoom);
       ctx.globalAlpha = 0.35;
       ctx.strokeStyle = '#c9b8ff';
       ctx.lineWidth = 2;
@@ -897,11 +917,10 @@ class Game {
     this.state = 'levelup';
     Sfx.levelup();
     const player = this.world.player;
-    // Stage 2 onward: each card can be swapped for gold. ui.js owns the
-    // button + the Bank charge; this just rolls the replacement.
-    const rerollOne = this.world.stage >= 2
-      ? (excludeIds) => Progression.rollChoices(1, player, excludeIds)[0] ?? null
-      : null;
+    // Each card can be swapped for gold. ui.js owns the button + the
+    // Bank charge; this just rolls the replacement.
+    const rerollOne = (excludeIds) =>
+      Progression.rollChoices(1, player, excludeIds)[0] ?? null;
     LevelUp.open(Progression.rollChoices(3, player), (id) => {
       Progression.apply(player, id);
       Hud.syncAbilities(player); // sidebar reflects the new pick
@@ -972,10 +991,14 @@ function main() {
   const canvas = document.getElementById('game-canvas');
 
   const resize = () => {
-    canvas.width = innerWidth;
-    canvas.height = innerHeight;
-    Camera.w = innerWidth;
-    Camera.h = innerHeight;
+    // Coarse primary pointer = phone/tablet (not a touchscreen laptop):
+    // render a 1.5x wider world slice and let the CSS 100% sizing scale
+    // it down, so small screens aren't stuck with a keyhole view.
+    Camera.zoom = matchMedia('(pointer: coarse)').matches ? 1.5 : 1;
+    canvas.width = innerWidth * Camera.zoom;
+    canvas.height = innerHeight * Camera.zoom;
+    Camera.w = canvas.width;
+    Camera.h = canvas.height;
   };
   resize();
   addEventListener('resize', resize);

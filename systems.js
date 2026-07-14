@@ -4,7 +4,7 @@
   the world state object owned by game.js; holds no rendering code.
 */
 
-import { CONFIG, ENEMIES, UPGRADES, Bank } from './config.js';
+import { CONFIG, ENEMIES, UPGRADES, Bank, Progress } from './config.js';
 import { Enemy, Projectile, Pickup, FloatingText, Burst } from './entities.js';
 import { Dragon, Serpent } from './boss.js';
 
@@ -292,6 +292,9 @@ export const Combat = {
       // ends the run before a dropped coin could be walked over); everyone
       // else flips a coin for their def's gold value.
       if (e.isBoss) {
+        // The relic only becomes permanent if its claimant fells the
+        // Stage 1 dragon — claim + boss kill, same run.
+        if (world.stage === 1 && world.player.stats.boomerang) Progress.unlockBoomerang();
         Bank.addGold(CONFIG.boss.gold);
         world.floaters.push(new FloatingText(
           e.x, e.y - 60, `+${CONFIG.boss.gold} GOLD`,
@@ -428,8 +431,8 @@ export const Progression = {
   //   weight:   relative roll chance (default 1; rare upgrades use < 1)
   //   requires: fn(player) gate — hides options that don't apply
   //             (e.g. Spirit Blade once owned, pierce after going melee)
-  // excludeIds: upgrades already on offer (used by the Stage 2 reroll so
-  // a rerolled card can't duplicate one of the other options).
+  // excludeIds: upgrades already on offer (used by the reroll so a
+  // rerolled card can't duplicate one of the other options).
   rollChoices(count = 3, player, excludeIds = []) {
     const pool = UPGRADES.filter((u) =>
       !excludeIds.includes(u.id) &&

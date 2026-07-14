@@ -82,9 +82,27 @@
         <path class="demon-eye" d="M358 208 L312 190 L318 207 L352 218 Z"/>
       </svg>
 
+      <!-- Ghost shopkeeper: spectral merchant haunting the lower left.
+           Clicking him opens the Shop (wired alongside btn-shop in ui.js). -->
+      <button id="ghost-shopkeeper" title="Shop" aria-label="Open Shop">
+        <svg viewBox="0 0 130 150" aria-hidden="true">
+          <!-- wispy body with a ragged trailing hem -->
+          <path class="ghost-body" d="M60 14 C86 14 98 38 98 64 L98 118
+            Q90 106 82 118 Q74 130 66 118 Q58 106 50 118 Q42 130 34 118
+            Q26 106 22 118 L22 64 C22 38 34 14 60 14 Z"/>
+          <ellipse class="ghost-eye" cx="47" cy="58" rx="6" ry="9"/>
+          <ellipse class="ghost-eye" cx="73" cy="58" rx="6" ry="9"/>
+          <ellipse class="ghost-eye" cx="60" cy="80" rx="4.5" ry="6"/>
+          <!-- stubby arm offering the coin purse -->
+          <path class="ghost-body" d="M94 74 Q110 78 108 92 Q100 90 92 84 Z"/>
+          <circle class="ghost-purse" cx="108" cy="104" r="11"/>
+          <path class="ghost-purse-tie" d="M103 95 Q108 91 113 95"/>
+        </svg>
+      </button>
+
       <div class="title-block">
         <h1 class="game-title">Ashes and Demons</h1>
-        <p class="game-tagline">How did that not land!?</p>
+        <p class="game-tagline">Returning Light</p>
       </div>
 
       <nav class="main-menu">

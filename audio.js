@@ -133,7 +133,7 @@ export const Music = {
 };
 
 export const Sfx = {
-  shoot()     { tone('square', 660, 180, 0.09, 0.04); },
+  shoot()     { tone('square', 200, 500, 0.09, 0.02); },
   slash()     { noise(0.12, 0.10, 2400); },
   kill()      { tone('triangle', 300, 60, 0.15, 0.08); },
   xp()        { tone('sine', 880, 1320, 0.07, 0.03); },
