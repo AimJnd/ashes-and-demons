@@ -6,6 +6,7 @@
 
 import { CONFIG, UPGRADES, Settings, CHARACTERS, CHAR_LEGS, SHOP, Bank, shopCost, Progress, wipeProgress } from './config.js';
 import { icon } from './icons.js';
+import { setVolume } from './audio.js';
 
 const LEADERBOARD_KEY = 'exorcist_survival_scores';
 
@@ -84,7 +85,9 @@ export const Screens = {
     if (title) title.textContent = victory ? 'VICTORY' : 'You Died';
     if (sub) {
       sub.textContent = victory
-        ? (stage >= 2
+        ? (stage >= 3
+          ? 'The desert kingdom falls silent beneath the dunes. GGs.'
+          : stage === 2
           ? 'The Serpent lies still. The dark forest falls silent. GGs.'
           : 'Ashmaw has fallen. The stair descends — Stage 2 unlocked. GGs.')
         : '';
@@ -107,6 +110,7 @@ export const Screens = {
       // Locked state is a disabled attribute (Menu.renderStages), so a
       // click here always means the stage is available.
       document.getElementById('btn-stage-2')?.addEventListener('click', () => onStart(2));
+      document.getElementById('btn-stage-3')?.addEventListener('click', () => onStart(3));
     }
     const restart = document.getElementById('btn-restart');
     const exit = document.getElementById('btn-exit');
@@ -419,7 +423,7 @@ export const Menu = {
       const desc = hb?.querySelector('.char-desc');
       if (desc) desc.textContent = owned
         ? 'Fast · frail · piercing shots'
-        : '🔒 250 gold — unlock in the Shop';
+        : 'Fast · frail · piercing shots · 🔒 250 gold in the Shop';
     };
     this._markChar = markChar; // renderShop re-runs it after a purchase
     wire('btn-char-hunter',   () => { Settings.setCharacter('hunter');   markChar(); });
@@ -441,15 +445,34 @@ export const Menu = {
       markControls();
     });
     markPauseControls();
+
+    // Master volume: the Settings and pause sliders drive one gain in
+    // audio.js; slide to 0 = mute. Changing either keeps both in sync.
+    const volSliders = ['settings-volume', 'pause-volume']
+      .map((id) => document.getElementById(id)).filter(Boolean);
+    const syncVolume = () => volSliders.forEach((s) => { s.value = Settings.volume * 100; });
+    volSliders.forEach((s) => s.addEventListener('input', () => {
+      Settings.setVolume(s.value / 100);
+      setVolume(Settings.volume);
+      syncVolume();
+    }));
+    setVolume(Settings.volume); // apply the persisted level at boot
+    syncVolume();
   },
 
   // Stage submenu: re-check the Stage 2 lock every time it opens, so a
   // fresh victory unlocks it without a reload.
   renderStages() {
     const b = document.getElementById('btn-stage-2');
-    if (!b) return;
-    b.disabled = !Progress.stage2;
-    b.textContent = Progress.stage2 ? 'Stage 2' : '🔒 Stage 2 — slay Ashmaw';
+    if (b) {
+      b.disabled = !Progress.stage2;
+      b.textContent = Progress.stage2 ? 'Stage 2' : '🔒 Stage 2 — slay Ashmaw';
+    }
+    const b3 = document.getElementById('btn-stage-3');
+    if (b3) {
+      b3.disabled = !Progress.stage3;
+      b3.textContent = Progress.stage3 ? 'Stage 3' : '🔒 Stage 3 — walk the Desert Gate';
+    }
   },
 
   // Build the shop from the SHOP catalog (config.js): gold balance on top,

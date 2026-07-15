@@ -18,17 +18,30 @@ import { Projectile, Boomerang } from './entities.js';
 import { Combat } from './systems.js';
 import { Sfx } from './audio.js';
 
+// Fog gate: you can't aim at what you can't see. Targets past the
+// half-faded edge are unacquirable — Stage 2's fog, or the Mummy King's
+// sandstorm at half that sight. Everywhere else sees forever.
+function sightRange(world) {
+  const base = CONFIG.fog.radius + CONFIG.fog.edge / 2;
+  if (world.sandstorm) return base * CONFIG.boss3.stormSightMul;
+  return world.stage === 2 ? base : Infinity;
+}
+
 // Nearest living enemy to (x, y), optionally capped to maxDist.
 // Skips invulnerable ones (the fly-by dragon) — no wasting aim on them.
+// Creatures outrank structures: autofire only chews on a tower or
+// obelisk when nothing is actually coming for you.
 function nearestEnemy(world, x, y, maxDist = Infinity) {
-  let best = null;
-  let bestD = maxDist * maxDist;
+  let best = null, bestD = maxDist * maxDist;
+  let bestS = null, bestSD = maxDist * maxDist;
   for (const e of world.enemies) {
     if (!e.alive || e.invulnerable) continue;
     const d = (e.x - x) ** 2 + (e.y - y) ** 2;
-    if (d < bestD) { bestD = d; best = e; }
+    if (e.def?.structure) {
+      if (d < bestSD) { bestSD = d; bestS = e; }
+    } else if (d < bestD) { bestD = d; best = e; }
   }
-  return best;
+  return best || bestS;
 }
 
 // Base ---------------------------------------------------------------
@@ -50,7 +63,7 @@ export class Weapon {
 export class RangedWeapon extends Weapon {
   id = 'ranged';
   attack(player, world) {
-    const target = nearestEnemy(world, player.x, player.y);
+    const target = nearestEnemy(world, player.x, player.y, sightRange(world));
     if (!target) return false;
     const ang = Math.atan2(target.y - player.y, target.x - player.x);
     const sp = player.stats.projectileSpeed;
@@ -302,7 +315,9 @@ export class BoltPassive {
     if (level <= 0) return;
     this._cd -= dt;
     if (this._cd > 0) return;
-    const alive = world.enemies.filter((e) => e.alive && !e.invulnerable);
+    const sight = sightRange(world);
+    const alive = world.enemies.filter((e) => e.alive && !e.invulnerable &&
+      Math.hypot(e.x - player.x, e.y - player.y) <= sight);
     if (!alive.length) return; // stay armed until something exists
 
     const cfg = CONFIG.weapons.bolt;

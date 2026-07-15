@@ -13,7 +13,7 @@
     - Pickup collection radius.
 */
 
-import { CONFIG, Settings, TILE, isTrapTile, CHARACTERS, CHAR_LEGS, SHOP, Bank } from './config.js';
+import { CONFIG, Settings, TILE, isTrapTile, isPoisonTile, isQuicksandTile, CHARACTERS, CHAR_LEGS, SHOP, Bank, Progress } from './config.js';
 import { Entity, FloatingText } from './entities.js';
 import { RangedWeapon, createWeapon, NovaPassive, BoomerangPassive, BoltPassive } from './weapons.js';
 
@@ -45,6 +45,10 @@ export class Player extends Entity {
     this._hurtCd = 0;        // i-frame timer after taking contact damage
     this.facing = 0;         // radians, last movement direction
     this.flip = false;       // billboard faces left when true
+    this.stamina = CONFIG.dash.max; // dash fuel (locked until Progress.dash)
+    this.glowT = 0;          // golden acquisition glow (jungle vault)
+    this._dashT = 0;         // > 0 while mid-dash
+    this._dashKeyHeld = false;
   }
 
   update(dt, input, world) {
@@ -66,16 +70,55 @@ export class Player extends Entity {
       if (k.has('KeyD') || k.has('ArrowRight')) dx += 1;
     }
 
+    // --- Dash (unlocked at the jungle vault): burst along the heading ----
+    const dcfg = CONFIG.dash;
+    const dashKey = input.keys?.has('Space') || input.keys?.has('ShiftLeft') || input.keys?.has('ShiftRight');
+    if (Progress.dash) {
+      if (dashKey && !this._dashKeyHeld && this._dashT <= 0 && this.stamina >= dcfg.cost) {
+        this.stamina -= dcfg.cost;
+        this._dashT = dcfg.duration;
+        // Dash where you're walking; standing still dashes where you face.
+        this._dashAng = (dx || dy) ? Math.atan2(dy, dx) : this.facing;
+      }
+      this.stamina = Math.min(dcfg.max, this.stamina + dcfg.regen * dt);
+    }
+    this._dashKeyHeld = !!dashKey;
+
     this.moving = (dx !== 0 || dy !== 0); // drives the walk-bob animation
-    if (dx !== 0 || dy !== 0) {
+    if (this._dashT > 0) {
+      this._dashT -= dt;
+      this.moving = true;
+      this.facing = this._dashAng;
+      this.x += Math.cos(this._dashAng) * dcfg.speed * dt;
+      this.y += Math.sin(this._dashAng) * dcfg.speed * dt;
+    } else if (dx !== 0 || dy !== 0) {
       // Normalize so diagonals aren't faster than cardinals.
       const len = Math.hypot(dx, dy);
       dx /= len; dy /= len;
       this.facing = Math.atan2(dy, dx);
       if (dx < 0) this.flip = true;
       else if (dx > 0) this.flip = false;
-      this.x += dx * this.stats.speed * dt;
-      this.y += dy * this.stats.speed * dt;
+      // Stage 3 quicksand drags the stride (the dash above is immune —
+      // it's the escape tool).
+      const mire = world.stage === 3 &&
+        isQuicksandTile(Math.floor(this.x / TILE), Math.floor(this.y / TILE))
+        ? CONFIG.quicksand.slowMul : 1;
+      this.x += dx * this.stats.speed * mire * dt;
+      this.y += dy * this.stats.speed * mire * dt;
+    }
+
+    // Bandage pull: reeled toward the mummy until the wrap goes slack
+    // (arrival, or the mummy dies). Walking fights it and loses.
+    if (this._pull) {
+      const m = this._pull.e;
+      const pdx = m.x - this.x, pdy = m.y - this.y;
+      const pd = Math.hypot(pdx, pdy);
+      if (!m.alive || pd < m.radius + this.radius + 12) {
+        this._pull = null;
+      } else {
+        this.x += (pdx / pd) * this._pull.speed * dt;
+        this.y += (pdy / pd) * this._pull.speed * dt;
+      }
     }
 
     // Clamp to arena bounds (keep the body fully inside the walls).
@@ -85,27 +128,48 @@ export class Player extends Entity {
 
     // Tick down the post-hit invulnerability window.
     if (this._hurtCd > 0) this._hurtCd -= dt;
+    if (this.glowT > 0) this.glowT -= dt;
 
     // Spike traps: linger past the grace period and they bite, then keep
     // ticking until you step off. Separate from _hurtCd — traps punish
     // camping, so enemy-hit i-frames shouldn't mask them.
     const trap = CONFIG.trap;
-    if (isTrapTile(Math.floor(this.x / TILE), Math.floor(this.y / TILE))) {
+    if (!world.treasure && world.stage !== 3 && // the desert swaps spikes for quicksand
+        isTrapTile(Math.floor(this.x / TILE), Math.floor(this.y / TILE))) {
       this._trapT = (this._trapT || 0) + dt;
       if (this._trapT >= trap.grace) {
         this._trapTick = (this._trapTick ?? 0) - dt;
         if (this._trapTick <= 0) {
-          this.takeDamage(trap.damage);
-          world.floaters?.push(
-            new FloatingText(this.x, this.y - this.radius * 1.6,
-              trap.damage, { color: '#c9b8ff' })
-          );
+          if (this.takeDamage(trap.damage)) {
+            world.floaters?.push(
+              new FloatingText(this.x, this.y - this.radius * 1.6,
+                trap.damage, { color: '#c9b8ff' })
+            );
+          }
           this._trapTick = trap.interval;
         }
       }
     } else {
       this._trapT = 0;
       this._trapTick = 0;
+    }
+
+    // Stage 2 poison pools: first tick lands on contact, then every
+    // interval while you stay in the sludge.
+    if (world.stage === 2 && !world.treasure &&
+        isPoisonTile(Math.floor(this.x / TILE), Math.floor(this.y / TILE))) {
+      this._poisonTick = (this._poisonTick ?? 0) - dt;
+      if (this._poisonTick <= 0) {
+        if (this.takeDamage(CONFIG.poison.damage)) {
+          world.floaters?.push(
+            new FloatingText(this.x, this.y - this.radius * 1.6,
+              CONFIG.poison.damage, { color: '#7dd45c' })
+          );
+        }
+        this._poisonTick = CONFIG.poison.interval;
+      }
+    } else {
+      this._poisonTick = 0;
     }
 
     // Attack: fully owned by the equipped weapon (weapons.js).
@@ -126,11 +190,13 @@ export class Player extends Entity {
   }
 
   takeDamage(amount) {
+    if (this._dashT > 0) return false; // dash i-frames: mid-dash hits whiff
     this.health -= amount;
     if (this.health <= 0) {
       this.health = 0;
       this.alive = false;
     }
+    return true;
   }
 
   gainXp(amount) {
@@ -181,6 +247,19 @@ export class Player extends Entity {
     ctx.beginPath();
     ctx.ellipse(s.x, s.y, r * 0.95, r * 0.38, 0, 0, Math.PI * 2);
     ctx.fill();
+
+    // Golden acquisition glow (dash powerup moment): a warm halo that
+    // fades out over glowT seconds.
+    if (this.glowT > 0) {
+      const a = Math.min(1, this.glowT);
+      const g = ctx.createRadialGradient(s.x, s.y - r, 4, s.x, s.y - r, r * 2.8);
+      g.addColorStop(0, `rgba(255, 233, 160, ${0.55 * a})`);
+      g.addColorStop(1, 'rgba(255, 220, 120, 0)');
+      ctx.fillStyle = g;
+      ctx.beginPath();
+      ctx.arc(s.x, s.y - r, r * 2.8, 0, Math.PI * 2);
+      ctx.fill();
+    }
 
     // Walk cycle: the whole body leans into the stride and counter-wobbles
     // with each step. Pivot at the feet so ground contact stays planted.
@@ -340,5 +419,16 @@ export class Player extends Entity {
     }
 
     ctx.restore(); // end walk lean
+
+    // --- Overhead bars: health (red) + stamina (grey, placeholder) -------
+    const barW = r * 2.2, barH = 3, bx0 = s.x - barW / 2;
+    const topY = s.y - r * 2.9 - 12; // just above the sprite's head
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.55)';
+    ctx.fillRect(bx0 - 1, topY - 1, barW + 2, barH * 2 + 3);
+    ctx.fillStyle = '#e33';
+    ctx.fillRect(bx0, topY, barW * Math.max(0, this.health / this.stats.maxHealth), barH);
+    // Grey placeholder until Dash is claimed; stamina-blue once it works.
+    ctx.fillStyle = Progress.dash ? '#3b9dff' : '#888';
+    ctx.fillRect(bx0, topY + barH + 1, barW * (this.stamina / CONFIG.dash.max), barH);
   }
 }

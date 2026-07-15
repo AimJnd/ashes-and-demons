@@ -6,7 +6,7 @@
 
 import { CONFIG, ENEMIES, UPGRADES, Bank, Progress } from './config.js';
 import { Enemy, Projectile, Pickup, FloatingText, Burst } from './entities.js';
-import { Dragon, Serpent } from './boss.js';
+import { Dragon, Serpent, MummyKing } from './boss.js';
 
 // Spawner / difficulty director -------------------------------------
 export class Spawner {
@@ -54,6 +54,22 @@ export class Spawner {
       return;
     }
 
+    // Stage 3: mummies march in on their own clock — 4+wave of them
+    // spread evenly across each wave (5 at wave 1, 6 at wave 2, ...).
+    if (world.stage >= 3) {
+      if (this._mummyWave !== this.wave) {
+        this._mummyWave = this.wave;
+        this._mummyQuota = 4 + this.wave;
+        this._mummyT = 0;
+      }
+      this._mummyT -= dt;
+      if (this._mummyQuota > 0 && this._mummyT <= 0) {
+        this._mummyT += CONFIG.waves.waveInterval / (4 + this.wave);
+        this._mummyQuota -= 1;
+        this.spawnEnemy(world, 'mummy');
+      }
+    }
+
     // Spawn rate grows each wave; accumulate fractional spawns.
     let rate = CONFIG.waves.baseSpawnRate + (this.wave - 1) * CONFIG.waves.spawnRateGrowth;
     if (world.stage >= 2) rate *= CONFIG.waves.stage2SpawnMul;
@@ -89,9 +105,9 @@ export class Spawner {
     const player = world.player;
 
     // The boss closes in from well off-screen at a random bearing:
-    // Stage 1 gets the dragon, Stage 2 the venom serpent.
+    // Stage 1 the dragon, Stage 2 the venom serpent, Stage 3 the Mummy King.
     const ang = Math.random() * Math.PI * 2;
-    const Boss = world.stage >= 2 ? Serpent : Dragon;
+    const Boss = world.stage >= 3 ? MummyKing : world.stage === 2 ? Serpent : Dragon;
     const boss = new Boss(
       player.x + Math.cos(ang) * 1200,
       player.y + Math.sin(ang) * 1200
@@ -99,7 +115,8 @@ export class Spawner {
     world.boss = boss;
     world.enemies.push(boss);
 
-    this._wyvernQueue = CONFIG.waves.wyvernEscort;
+    // The Mummy King raises his own scarab court — no wyvern escort.
+    this._wyvernQueue = world.stage >= 3 ? 0 : CONFIG.waves.wyvernEscort;
     this._wyvernTimer = 0.8; // a beat after the boss appears
   }
 
@@ -118,7 +135,9 @@ export class Spawner {
 
     // Per-wave scaling on the instance (shared defs stay untouched).
     // Escort wyverns spawn at config stats — that fight is tuned directly.
-    if (!forcedType) {
+    // Quota mummies (stage 3) DO scale: they're wave spawns, just on
+    // their own clock.
+    if (forcedType !== 'wyvern') {
       const hpMul = 1 + (this.wave - 1) * CONFIG.waves.hpScaling;
       const spMul = 1 + (this.wave - 1) * CONFIG.waves.speedScaling;
       e.hp *= hpMul;
@@ -143,6 +162,14 @@ export class Spawner {
   }
 
   _pickType(stage) {
+    // Stage 3 remix: scarabs are the bread-and-butter charger, swarms
+    // fill the gaps. Mummies arrive on their own quota clock (update),
+    // and shooters only ever come from collapsed towers.
+    if (stage >= 3) {
+      const r = Math.random();
+      if (r < Math.min(0.7, 0.35 + this.wave * 0.05)) return 'scarab';
+      return 'swarm';
+    }
     // Stage 2 remix: no shades — wyverns are the bread-and-butter
     // chaser (their share ramps up by wave so wave 1 doesn't maul you),
     // and spitters show up early and often.
@@ -218,11 +245,11 @@ export const Separation = {
             const me = e.radius * e.radius;
             const mo = o.radius * o.radius;
             const total = me + mo;
-            if (!e.isBoss) {
+            if (!e.isBoss && !e.def?.structure) {
               e.x -= nx * push * (mo / total);
               e.y -= ny * push * (mo / total);
             }
-            if (!o.isBoss) {
+            if (!o.isBoss && !o.def?.structure) {
               o.x += nx * push * (me / total);
               o.y += ny * push * (me / total);
             }
@@ -258,6 +285,7 @@ export const Combat = {
     }
     const player = world.player;
     e.hp -= damage;
+    e._lastHit = world.time; // mummies rewrap to full if this goes stale
     e.flash(); // subtle white tint so the struck enemy pops
 
     // Damage number: spawn just above the enemy's body.
@@ -280,6 +308,8 @@ export const Combat = {
       world.kills += 1;
       // Death burst: the body scatters into shards of its own color.
       world.floaters.push(new Burst(e.x, e.y, e.def?.color || '#c0392b'));
+      // A collapsing tower drops its archer into the fight.
+      if (e.hasShooter) world.enemies.push(new Enemy(e.x, e.y, 'shooter'));
       world.pickups.push(new Pickup(e.x, e.y, 'xp', e.xp));
       // Random health drop — Lucky Charm adds to the base chance. Offset
       // slightly so it isn't hidden under the gem.
@@ -295,14 +325,19 @@ export const Combat = {
         // The relic only becomes permanent if its claimant fells the
         // Stage 1 dragon — claim + boss kill, same run.
         if (world.stage === 1 && world.player.stats.boomerang) Progress.unlockBoomerang();
-        Bank.addGold(CONFIG.boss.gold);
+        const bounty = (world.stage >= 3 ? CONFIG.boss3
+                      : world.stage === 2 ? CONFIG.boss2 : CONFIG.boss).gold;
+        Bank.addGold(bounty);
         world.floaters.push(new FloatingText(
-          e.x, e.y - 60, `+${CONFIG.boss.gold} GOLD`,
+          e.x, e.y - 60, `+${bounty} GOLD`,
           { color: '#ffd166', size: 20, life: 1.6 }
         ));
-        // The Gate of Descent rises a little away from the corpse, nudged
-        // toward the arena center so it can never land outside the walls.
-        // game.js animates it open and reads the stair as the exit.
+        // The exit rises a little away from the corpse, nudged toward the
+        // arena center so it can never land outside the walls. game.js
+        // animates it open and reads the stair as the exit. Stage 3: the
+        // Mummy King's fall stills his sandstorm and reveals the pyramid
+        // dungeon the gate is set into.
+        world.sandstorm = false;
         const ang = Math.atan2(
           CONFIG.worldHeight / 2 - e.y, CONFIG.worldWidth / 2 - e.x
         );
@@ -310,10 +345,12 @@ export const Combat = {
           x: e.x + Math.cos(ang) * 340,
           y: e.y + Math.sin(ang) * 340,
           open: 0, // 0 closed → 1 fully open (door swing progress)
+          pyramid: world.stage >= 3,
         };
         world.floaters.push(new FloatingText(
-          world.gate.x, world.gate.y - 150, 'A GATE RISES...',
-          { color: '#c9a0ff', size: 20, life: 2 }
+          world.gate.x, world.gate.y - 150,
+          world.stage >= 3 ? 'THE GATES REVEAL THEMSELVES...' : 'A GATE RISES...',
+          { color: world.stage >= 3 ? '#e0c37a' : '#c9a0ff', size: 20, life: 2.5 }
         ));
       } else if (e.elite) {
         // Elites always pay out — that's the whole point of hunting them.
@@ -356,12 +393,26 @@ export const Combat = {
       }
     }
 
+    // Structures are solid: shove the player out of overlap so towers
+    // and obelisks can't be walked through.
+    for (const e of world.enemies) {
+      if (!e.alive || !e.def?.structure) continue;
+      const dx = player.x - e.x, dy = player.y - e.y;
+      const rr = e.radius + player.radius;
+      const d2 = dx * dx + dy * dy;
+      if (d2 < rr * rr && d2 > 0) {
+        const d = Math.sqrt(d2);
+        player.x += (dx / d) * (rr - d);
+        player.y += (dy / d) * (rr - d);
+      }
+    }
+
     // Enemies vs player (contact damage, gated by i-frames) ----------
     if (player._hurtCd <= 0) {
       for (const e of world.enemies) {
-        if (!e.alive) continue;
+        if (!e.alive || e.damage <= 0) continue; // structures don't bite
         if (hits(e, player)) {
-          player.takeDamage(e.damage);
+          if (!player.takeDamage(e.damage)) break; // dodged mid-dash
           player._hurtCd = 0.5;
           // Damage taken: red number above the player.
           world.floaters.push(
@@ -380,13 +431,16 @@ export const Combat = {
       if (!h.alive) continue;
       if (hits(h, player)) {
         h.alive = false; // fireball bursts on impact either way
-        if (player._hurtCd <= 0) {
-          player.takeDamage(h.damage);
+        if (player._hurtCd <= 0 && player.takeDamage(h.damage)) {
           player._hurtCd = 0.5;
           world.floaters.push(
             new FloatingText(player.x, player.y - player.radius * 1.6,
               Math.round(h.damage), { color: '#ff8c42' })
           );
+          // Bandage shot: the wrap catches — the mummy reels the player
+          // in (player.js drags until the slack runs out). A dash-dodged
+          // hit never reaches here, so i-frames beat the pull too.
+          if (h.pull) player._pull = { e: h.mummy, speed: h.pull };
         }
       }
     }

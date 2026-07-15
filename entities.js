@@ -77,13 +77,81 @@ export class Enemy extends Entity {
           (dx / d) * sp, (dy / d) * sp, this.damage
         ));
       }
+    } else if (this.def.behavior === 'static') {
+      // Structure: rooted. An armed tower snipes from its top on a
+      // spitter-style cadence; the arrow leaves the parapet, not the base.
+      if (this.hasShooter && world) {
+        this._spitCd = (this._spitCd ?? Math.random() * this.def.cooldown) - dt;
+        if (this._spitCd <= 0 && d < this.def.range) {
+          this._spitCd = this.def.cooldown;
+          const oy = this.y - 84; // parapet height (matches the render)
+          const adx = player.x - this.x, ady = (player.y - 10) - oy;
+          const ad = Math.hypot(adx, ady) || 1;
+          const sp = this.def.spitSpeed;
+          world.hazards.push(new Spit(
+            this.x, oy, (adx / ad) * sp, (ady / ad) * sp,
+            this.def.shotDamage, '#e8d28a'
+          ));
+        }
+      }
+    } else if (this.def.behavior === 'charge') {
+      // Scarab: far away it roots, aims, then barrels down a straight
+      // lane; close in it just scuttles at you (contact damage bites).
+      if (this._chargeT > 0) {
+        this._chargeT -= dt;
+        this.x += Math.cos(this._chargeAng) * this.def.chargeSpeed * dt;
+        this.y += Math.sin(this._chargeAng) * this.def.chargeSpeed * dt;
+      } else if (this._windupT > 0) {
+        this._windupT -= dt; // rooted: the render shivers as a tell
+        if (this._windupT <= 0) this._chargeT = this.def.chargeTime;
+      } else {
+        this._chargeCd = (this._chargeCd ?? 0) - dt;
+        if (d > this.def.chargeRange && this._chargeCd <= 0) {
+          this._windupT = this.def.windup;
+          this._chargeAng = Math.atan2(dy, dx); // lane locked at windup
+          this._chargeCd = this.def.chargeCooldown;
+        } else {
+          this.x += (dx / d) * speed * dt;
+          this.y += (dy / d) * speed * dt;
+        }
+      }
+    } else if (this.def.behavior === 'mummy') {
+      const P = this.def.pull;
+      if (this._bWindup > 0) {
+        // Rooted; the render draws the bandage lane along _bAng.
+        this._bWindup -= dt;
+        if (this._bWindup <= 0 && world) {
+          world.hazards.push(new Bandage(this, this._bAng, P));
+        }
+      } else {
+        this._bCd = (this._bCd ?? Math.random() * P.cooldown) - dt;
+        if (world && this._bCd <= 0 && d < P.range && d > 120) {
+          this._bCd = P.cooldown;
+          this._bWindup = P.windup;
+          // Lane locked at windup (sidestep it!) — aimed from the shot's
+          // launch point a shoulder up, so it flies the telegraph exactly.
+          this._bAng = Math.atan2(player.y - (this.y - this.radius), dx);
+        } else {
+          this.x += (dx / d) * speed * dt;
+          this.y += (dy / d) * speed * dt;
+        }
+      }
+      // Left alone too long, the wraps reknit: back to full.
+      if (world && this.hp < this.maxHp &&
+          world.time - (this._lastHit ?? 0) > this.def.healDelay) {
+        this.hp = this.maxHp;
+        world.floaters.push(new FloatingText(
+          this.x, this.y - this.radius * 2, 'REWOUND', { color: '#cfc3a0', size: 14 }
+        ));
+      }
     } else {
       // 'chase': move straight at the player.
       this.x += (dx / d) * speed * dt;
       this.y += (dy / d) * speed * dt;
     }
 
-    if (dx < 0) this.flip = true;
+    if (this.def.structure) this.flip = false; // buildings don't turn
+    else if (dx < 0) this.flip = true;
     else if (dx > 0) this.flip = false;
     if (this._hitFlash > 0) this._hitFlash -= dt;
   }
@@ -101,6 +169,11 @@ export class Enemy extends Entity {
       case 'swarm':   body = this._renderSwarm(ctx, s, t); break;
       case 'wyvern':  body = this._renderWyvern(ctx, s, t); break;
       case 'spitter': body = this._renderSpitter(ctx, s, t); break;
+      case 'scarab':  body = this._renderScarab(ctx, s, t); break;
+      case 'mummy':   body = this._renderMummy(ctx, s, t, camera); break;
+      case 'shooter': body = this._renderShooter(ctx, s, t); break;
+      case 'tower':   body = this._renderTower(ctx, s, t); break;
+      case 'obelisk': body = this._renderObelisk(ctx, s, t); break;
       default:        body = this._renderShade(ctx, s, t); break;
     }
     // Elite: golden glow outline traced around the body silhouette.
@@ -536,6 +609,349 @@ export class Enemy extends Entity {
 
     return body;
   }
+
+  // Scarab: demonic dung beetle — split chitin shell, horn, skittering
+  // legs, ember eyes. Shivers in place while it winds up a charge.
+  _renderScarab(ctx, s, t) {
+    const r = this.radius;
+    const dir = this.flip ? -1 : 1;
+    // Windup shiver: rooted rage before the lunge.
+    const jit = this._windupT > 0 ? Math.sin(t * 60) * 2 : 0;
+    const cx = s.x + jit, cy = s.y - r * 0.9;
+
+    this._shadow(ctx, s, r * 1.05);
+
+    // Legs: three per side, scuttling.
+    ctx.strokeStyle = '#3a1c0c';
+    ctx.lineWidth = 2.5;
+    ctx.lineCap = 'round';
+    for (const side of [-1, 1]) {
+      for (let i = 0; i < 3; i++) {
+        const step = Math.sin(t * 14 + i * 2.1 + side) * r * 0.14;
+        const lx = cx + side * r * 0.85, ly = cy + r * (0.1 + i * 0.28);
+        ctx.beginPath();
+        ctx.moveTo(cx + side * r * 0.4, ly - r * 0.1);
+        ctx.lineTo(lx + step * side, ly + r * 0.34);
+        ctx.stroke();
+      }
+    }
+
+    // Shell: squat oval, split down the middle.
+    const p = new Path2D();
+    p.ellipse(cx, cy, r * 1.15, r * 0.95, 0, 0, Math.PI * 2);
+    ctx.fillStyle = this._vgrad(ctx, cx, cy - r, cy + r, '#8a3c14', '#3d1a08');
+    ctx.fill(p);
+    ctx.strokeStyle = 'rgba(255, 120, 50, 0.65)';
+    ctx.lineWidth = 1.5;
+    ctx.stroke(p);
+    ctx.strokeStyle = 'rgba(0, 0, 0, 0.5)'; // elytra seam
+    ctx.beginPath();
+    ctx.moveTo(cx, cy - r * 0.9);
+    ctx.lineTo(cx, cy + r * 0.9);
+    ctx.stroke();
+
+    // Head plate + horn out the front.
+    const hx = cx + dir * r * 1.0;
+    ctx.fillStyle = '#4d2009';
+    ctx.beginPath();
+    ctx.ellipse(hx, cy + r * 0.1, r * 0.42, r * 0.36, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#d9c9b6';
+    ctx.beginPath();
+    ctx.moveTo(hx + dir * r * 0.15, cy);
+    ctx.quadraticCurveTo(hx + dir * r * 0.85, cy - r * 0.45, hx + dir * r * 1.0, cy - r * 0.85);
+    ctx.quadraticCurveTo(hx + dir * r * 0.45, cy - r * 0.3, hx - dir * r * 0.05, cy + r * 0.2);
+    ctx.closePath();
+    ctx.fill();
+
+    // Ember eyes — flare white-hot during the windup.
+    const glow = this._windupT > 0 ? '#ffe9c9' : '#ff7a3c';
+    this._glowDot(ctx, hx + dir * r * 0.12, cy - r * 0.02, 2.2, glow, this._windupT > 0 ? 12 : 7);
+    this._glowDot(ctx, hx + dir * r * 0.3, cy + r * 0.12, 2.2, glow, this._windupT > 0 ? 12 : 7);
+
+    // Mid-charge: dust kicked up behind.
+    if (this._chargeT > 0) {
+      ctx.save();
+      ctx.globalAlpha = 0.4;
+      ctx.fillStyle = '#c8b088';
+      for (let i = 1; i <= 3; i++) {
+        const bx = cx - Math.cos(this._chargeAng) * r * i * 0.9;
+        const by = cy - Math.sin(this._chargeAng) * r * i * 0.9;
+        ctx.beginPath();
+        ctx.arc(bx, by + r * 0.6, r * 0.28 * i * 0.5, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.restore();
+    }
+    return p;
+  }
+
+  // Mummy: a bandaged colossus — wrapped bulk, sagging strips, sunken
+  // gold eyes. While winding the bandage shot, a thin telegraph line
+  // marks the lane it will fire down.
+  _renderMummy(ctx, s, t, camera) {
+    const r = this.radius;
+    const dir = this.flip ? -1 : 1;
+    const sway = Math.sin(t * 1.6) * r * 0.05;
+    const h = r * 2.6, w = r * 1.5;
+    const top = s.y - h;
+
+    // Telegraph: the bandage lane, drawn under the body.
+    if (this._bWindup > 0) {
+      const P = this.def.pull;
+      const urgency = 1 - this._bWindup / P.windup; // brightens as it nears
+      ctx.save();
+      ctx.strokeStyle = `rgba(240, 230, 200, ${0.25 + urgency * 0.45})`;
+      ctx.lineWidth = 2;
+      ctx.setLineDash([8, 8]);
+      ctx.lineDashOffset = -t * 60;
+      ctx.beginPath();
+      ctx.moveTo(s.x, s.y - r);
+      ctx.lineTo(s.x + Math.cos(this._bAng) * P.range,
+                 s.y - r + Math.sin(this._bAng) * P.range);
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    this._shadow(ctx, s, r * 1.2);
+
+    // Body: a lumbering wrapped slab, arms fused into the silhouette.
+    const p = new Path2D();
+    p.moveTo(s.x - w * 0.72 + sway, s.y);
+    p.quadraticCurveTo(s.x - w * 0.95 + sway, top + h * 0.45, s.x - w * 0.5 + sway, top + h * 0.18);
+    p.quadraticCurveTo(s.x + sway * 2, top - r * 0.25, s.x + w * 0.5 + sway, top + h * 0.18);
+    p.quadraticCurveTo(s.x + w * 0.95 + sway, top + h * 0.45, s.x + w * 0.72 + sway, s.y);
+    p.closePath();
+    ctx.fillStyle = this._vgrad(ctx, s.x, top, s.y, '#d8cba6', '#7a6f52');
+    ctx.fill(p);
+    ctx.strokeStyle = 'rgba(60, 50, 30, 0.6)';
+    ctx.lineWidth = 2;
+    ctx.stroke(p);
+
+    // Wrap lines: uneven horizontal bandage passes.
+    ctx.strokeStyle = 'rgba(90, 78, 52, 0.55)';
+    ctx.lineWidth = 1.5;
+    for (let i = 0; i < 6; i++) {
+      const wy = top + h * (0.16 + i * 0.14);
+      const ww = w * (0.55 + Math.sin(i * 2.7) * 0.18);
+      ctx.beginPath();
+      ctx.moveTo(s.x - ww + sway, wy);
+      ctx.quadraticCurveTo(s.x + sway, wy + 4, s.x + ww + sway, wy - 2);
+      ctx.stroke();
+    }
+
+    // Loose strips trailing off one shoulder and the hip.
+    ctx.strokeStyle = '#c9bd97';
+    ctx.lineWidth = 3;
+    ctx.lineCap = 'round';
+    for (const [ax, ay, len, ph] of [[-0.6, 0.25, 0.5, 0], [0.55, 0.6, 0.4, 2.2]]) {
+      const bx = s.x + w * ax + sway, by = top + h * ay;
+      ctx.beginPath();
+      ctx.moveTo(bx, by);
+      ctx.quadraticCurveTo(bx - dir * r * 0.4, by + r * len * 1.4 + Math.sin(t * 2.4 + ph) * 3,
+                           bx - dir * r * 0.2 + Math.sin(t * 1.8 + ph) * 4, by + r * len * 2.4);
+      ctx.stroke();
+    }
+
+    // Head band gap: dark slit with sunken gold eyes.
+    ctx.fillStyle = '#2b2416';
+    ctx.fillRect(s.x - w * 0.4 + sway, top + h * 0.14, w * 0.8, r * 0.42);
+    this._glowDot(ctx, s.x - r * 0.28 + sway + dir * r * 0.08, top + h * 0.14 + r * 0.2, 2.6, '#ffd166', 9);
+    this._glowDot(ctx, s.x + r * 0.28 + sway + dir * r * 0.08, top + h * 0.14 + r * 0.2, 2.6, '#ffd166', 9);
+
+    // HP bar: a big pool the player must burst down before it rewinds.
+    if (this.hp < this.maxHp) {
+      const bw = r * 2.2;
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.55)';
+      ctx.fillRect(s.x - bw / 2, top - 14, bw, 5);
+      ctx.fillStyle = '#cfc3a0';
+      ctx.fillRect(s.x - bw / 2, top - 14, bw * (this.hp / this.maxHp), 5);
+    }
+    return p;
+  }
+
+  // Shooter: the dropped tower archer — robed desert bandit with a
+  // shortbow, turban and ember eyes.
+  _renderShooter(ctx, s, t) {
+    const r = this.radius;
+    const dir = this.flip ? -1 : 1;
+    const bob = Math.sin(t * 6) * 1.5;
+    const h = r * 2.5, w = r * 1.35;
+    const top = s.y - h + bob;
+
+    this._shadow(ctx, s, r * 0.9);
+
+    // Robe: teardrop that flares to the hem.
+    const p = new Path2D();
+    p.moveTo(s.x, top);
+    p.quadraticCurveTo(s.x + w * 0.85, top + h * 0.55, s.x + w * 0.6, s.y);
+    p.lineTo(s.x - w * 0.6, s.y);
+    p.quadraticCurveTo(s.x - w * 0.85, top + h * 0.55, s.x, top);
+    p.closePath();
+    ctx.fillStyle = this._vgrad(ctx, s.x, top, s.y, '#c99b4a', '#6e4d1e');
+    ctx.fill(p);
+    ctx.strokeStyle = 'rgba(255, 210, 130, 0.6)';
+    ctx.lineWidth = 1.5;
+    ctx.stroke(p);
+
+    // Sash + turban knot.
+    ctx.strokeStyle = '#8a2f2f';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(s.x - w * 0.5, top + h * 0.52);
+    ctx.quadraticCurveTo(s.x, top + h * 0.62, s.x + w * 0.5, top + h * 0.48);
+    ctx.stroke();
+    ctx.fillStyle = '#e8dcc0';
+    ctx.beginPath();
+    ctx.ellipse(s.x, top + r * 0.28, r * 0.55, r * 0.34, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Shortbow held out front; string tautens as the shot readies.
+    const drawFrac = this._spitCd !== undefined
+      ? Math.max(0, (0.5 - Math.max(0, this._spitCd)) / 0.5) : 0;
+    const bx = s.x + dir * w * 0.85, by = top + h * 0.45;
+    ctx.strokeStyle = '#5d3b21';
+    ctx.lineWidth = 2.5;
+    ctx.beginPath();
+    ctx.arc(bx, by, r * 0.75, -Math.PI / 2 + dir * 0.2, Math.PI / 2 - dir * 0.2, dir < 0);
+    ctx.stroke();
+    ctx.strokeStyle = 'rgba(240, 230, 200, 0.8)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(bx, by - r * 0.72);
+    ctx.lineTo(bx - dir * drawFrac * r * 0.5, by);
+    ctx.lineTo(bx, by + r * 0.72);
+    ctx.stroke();
+
+    // Shadowed face, ember eyes.
+    ctx.fillStyle = '#241605';
+    ctx.beginPath();
+    ctx.ellipse(s.x + dir * r * 0.06, top + r * 0.62, r * 0.42, r * 0.3, 0, 0, Math.PI * 2);
+    ctx.fill();
+    this._glowDot(ctx, s.x + dir * r * 0.2, top + r * 0.6, 1.8, '#ffb347', 6);
+    this._glowDot(ctx, s.x - dir * r * 0.06, top + r * 0.62, 1.8, '#ffb347', 6);
+    return p;
+  }
+
+  // Tower: breakable sandstone watchtower. Cracks spread as hp drops;
+  // an armed tower shows its archer pacing the parapet.
+  _renderTower(ctx, s, t) {
+    const r = this.radius;
+    const W = r * 2.1, H = 84; // parapet height matches the shot origin
+    const top = s.y - H;
+
+    this._shadow(ctx, s, r * 1.25);
+
+    // Shaft with a slight taper.
+    ctx.fillStyle = this._vgrad(ctx, s.x, top, s.y, '#d6b678', '#8a6f42');
+    ctx.beginPath();
+    ctx.moveTo(s.x - W * 0.5, s.y);
+    ctx.lineTo(s.x - W * 0.42, top);
+    ctx.lineTo(s.x + W * 0.42, top);
+    ctx.lineTo(s.x + W * 0.5, s.y);
+    ctx.closePath();
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(60, 40, 15, 0.55)';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
+    // Brick courses + arrow slit.
+    ctx.strokeStyle = 'rgba(70, 50, 20, 0.35)';
+    ctx.lineWidth = 1;
+    for (let i = 1; i < 5; i++) {
+      const yy = top + (H * i) / 5;
+      ctx.beginPath();
+      ctx.moveTo(s.x - W * 0.46, yy);
+      ctx.lineTo(s.x + W * 0.46, yy);
+      ctx.stroke();
+    }
+    ctx.fillStyle = '#241605';
+    ctx.fillRect(s.x - 2.5, top + H * 0.35, 5, 16);
+
+    // Crenellated parapet.
+    ctx.fillStyle = '#c2a25e';
+    ctx.fillRect(s.x - W * 0.55, top - 10, W * 1.1, 12);
+    for (let i = 0; i < 4; i++) {
+      ctx.fillRect(s.x - W * 0.55 + i * W * 0.32, top - 18, W * 0.18, 9);
+    }
+
+    // Damage: cracks spread once it's been chewed below 60%.
+    const frac = this.hp / this.maxHp;
+    if (frac < 0.6) {
+      ctx.save();
+      ctx.strokeStyle = `rgba(30, 18, 5, ${0.9 - frac})`;
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(s.x - W * 0.2, s.y - 4);
+      ctx.lineTo(s.x - W * 0.05, s.y - H * 0.4);
+      ctx.lineTo(s.x - W * 0.25, s.y - H * 0.6);
+      if (frac < 0.3) {
+        ctx.moveTo(s.x + W * 0.3, s.y - 8);
+        ctx.lineTo(s.x + W * 0.12, s.y - H * 0.5);
+        ctx.lineTo(s.x + W * 0.3, s.y - H * 0.75);
+      }
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    // The archer on top — out of melee reach until the tower falls.
+    if (this.hasShooter) {
+      const ax = s.x + Math.sin(t * 1.2) * W * 0.12, ay = top - 18;
+      ctx.fillStyle = '#6e4d1e';
+      ctx.beginPath();
+      ctx.ellipse(ax, ay - 6, 6, 9, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#e8dcc0'; // turban
+      ctx.beginPath();
+      ctx.ellipse(ax, ay - 15, 4.5, 3, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = '#5d3b21'; // bow silhouette
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(ax + 8, ay - 8, 6, -Math.PI / 2, Math.PI / 2);
+      ctx.stroke();
+      this._glowDot(ctx, ax + 2, ay - 8, 1.4, '#ffb347', 5);
+    }
+
+    // Silhouette path for elite/hit-flash overlays.
+    const p = new Path2D();
+    p.rect(s.x - W * 0.55, top - 18, W * 1.1, H + 18);
+    return p;
+  }
+
+  // Obelisk: a glyph-carved sandstone needle.
+  _renderObelisk(ctx, s, t) {
+    const r = this.radius;
+    const W = r * 1.7, H = 64;
+    const top = s.y - H;
+
+    this._shadow(ctx, s, r * 1.05);
+
+    const p = new Path2D();
+    p.moveTo(s.x - W * 0.42, s.y);
+    p.lineTo(s.x - W * 0.2, top + 8);
+    p.lineTo(s.x, top - 6); // pyramidion tip
+    p.lineTo(s.x + W * 0.2, top + 8);
+    p.lineTo(s.x + W * 0.42, s.y);
+    p.closePath();
+    ctx.fillStyle = this._vgrad(ctx, s.x, top, s.y, '#cbb078', '#7d6238');
+    ctx.fill(p);
+    ctx.strokeStyle = 'rgba(60, 40, 15, 0.55)';
+    ctx.lineWidth = 2;
+    ctx.stroke(p);
+
+    // Glyph column: faint carved marks with a slow demonic pulse.
+    ctx.save();
+    ctx.fillStyle = `rgba(200, 90, 40, ${0.4 + Math.sin(t * 2) * 0.15})`;
+    for (let i = 0; i < 4; i++) {
+      const gy = top + 14 + i * 12;
+      ctx.fillRect(s.x - 3, gy, 6, 3);
+      if (i % 2) ctx.fillRect(s.x - 5, gy + 5, 4, 2);
+      else ctx.fillRect(s.x + 1, gy + 5, 4, 2);
+    }
+    ctx.restore();
+    return p;
+  }
 }
 
 // Projectile ---------------------------------------------------------
@@ -735,12 +1151,13 @@ export class Pickup extends Entity {
 // Spit: the spitter's venom glob — a hostile projectile riding the same
 // world.hazards list (and Combat rules) as the dragon's fireballs.
 export class Spit extends Entity {
-  constructor(x, y, vx, vy, damage) {
+  constructor(x, y, vx, vy, damage, color) {
     super(x, y, 7);
     this.vx = vx;
     this.vy = vy;
     this.damage = damage;
     this.life = 3;
+    this.color = color; // optional override (tower arrows are sand-gold)
   }
 
   update(dt) {
@@ -754,8 +1171,8 @@ export class Spit extends Entity {
     const s = camera.toScreen(this.x, this.y);
     const wob = Math.sin(performance.now() / 60 + this.x) * 0.15;
     ctx.save();
-    ctx.fillStyle = '#b7f34d';
-    ctx.shadowColor = '#8fd63a';
+    ctx.fillStyle = this.color || '#b7f34d';
+    ctx.shadowColor = this.color || '#8fd63a';
     ctx.shadowBlur = 10;
     ctx.beginPath();
     ctx.ellipse(s.x, s.y, this.radius * (0.85 + wob), this.radius * (0.85 - wob), 0, 0, Math.PI * 2);
@@ -765,6 +1182,58 @@ export class Spit extends Entity {
     ctx.beginPath();
     ctx.arc(s.x - 1.5, s.y - 1.5, this.radius * 0.35, 0, Math.PI * 2);
     ctx.fill();
+    ctx.restore();
+  }
+}
+
+// Bandage shot: the mummy's pull attack. A wrapped fist flies down the
+// telegraphed lane trailing a taut bandage back to the mummy; Combat
+// reads `pull` on hit and reels the player in (systems.js).
+export class Bandage extends Entity {
+  constructor(mummy, ang, cfg) {
+    super(mummy.x, mummy.y - mummy.radius, 8);
+    this.mummy = mummy;
+    this.vx = Math.cos(ang) * cfg.speed;
+    this.vy = Math.sin(ang) * cfg.speed;
+    this.damage = cfg.damage;
+    this.pull = cfg.pullSpeed; // Combat: reel speed toward the mummy
+    this.life = cfg.range / cfg.speed;
+  }
+
+  update(dt) {
+    this.x += this.vx * dt;
+    this.y += this.vy * dt;
+    this.life -= dt;
+    if (this.life <= 0 || !this.mummy.alive) this.alive = false;
+  }
+
+  render(ctx, camera) {
+    const s = camera.toScreen(this.x, this.y);
+    const m = camera.toScreen(this.mummy.x, this.mummy.y - this.mummy.radius);
+    ctx.save();
+    // The taut bandage back to the mummy — thin, slightly slack.
+    ctx.strokeStyle = 'rgba(232, 222, 190, 0.9)';
+    ctx.lineWidth = 3;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(m.x, m.y);
+    ctx.quadraticCurveTo((m.x + s.x) / 2, (m.y + s.y) / 2 + 8, s.x, s.y);
+    ctx.stroke();
+    // Wrapped fist at the head.
+    ctx.fillStyle = '#e8dcc0';
+    ctx.shadowColor = '#cfc3a0';
+    ctx.shadowBlur = 8;
+    ctx.beginPath();
+    ctx.arc(s.x, s.y, this.radius * 0.8, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(90, 78, 52, 0.7)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(s.x - 5, s.y - 2);
+    ctx.lineTo(s.x + 5, s.y + 3);
+    ctx.moveTo(s.x - 5, s.y + 3);
+    ctx.lineTo(s.x + 5, s.y - 1);
+    ctx.stroke();
     ctx.restore();
   }
 }

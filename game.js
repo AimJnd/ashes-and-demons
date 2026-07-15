@@ -4,8 +4,8 @@
   HTML loads; it imports everything else.
 */
 
-import { CONFIG, isTrapTile, Progress } from './config.js';
-import { FloatingText, drawBoomerang } from './entities.js';
+import { CONFIG, isTrapTile, isPoisonTile, isQuicksandTile, Progress, CHAR_LEGS } from './config.js';
+import { FloatingText, drawBoomerang, Enemy } from './entities.js';
 import { Player } from './player.js';
 import { Spawner, Combat, Progression, Separation } from './systems.js';
 import { Hud, Screens, LevelUp, Leaderboard, Menu, PauseMenu } from './ui.js';
@@ -123,6 +123,52 @@ const Arena = {
       ctx.lineTo(cx, cy + 4);
       ctx.closePath();
       ctx.fill();
+    }
+  },
+
+  // Stage 3 quicksand: a sunken pit of wet sand with slow counter-swirls
+  // pulling toward a dark throat. Wading through it slows you (player.js).
+  renderQuicksand(ctx, sx, sy, h) {
+    const T = this.TILE;
+    ctx.fillStyle = '#5d4c2e'; // wet, sunken sand
+    ctx.fillRect(sx + 2, sy + 2, T - 4, T - 4);
+    const cx = sx + T / 2, cy = sy + T / 2;
+    const t = performance.now() / 1000;
+    ctx.strokeStyle = 'rgba(40, 30, 14, 0.55)';
+    ctx.lineWidth = 2;
+    for (let i = 0; i < 3; i++) {
+      const rr = T * (0.42 - i * 0.12);
+      const a0 = t * (0.4 + i * 0.25) + (h % 7);
+      ctx.beginPath();
+      ctx.arc(cx, cy, rr, a0, a0 + Math.PI * 1.4);
+      ctx.stroke();
+    }
+    ctx.fillStyle = '#3a2d16'; // the throat
+    ctx.beginPath();
+    ctx.ellipse(cx, cy, 7, 5, 0, 0, Math.PI * 2);
+    ctx.fill();
+  },
+
+  // Stage 2 poison pool: sunken sludge tile with seeded bubbles that
+  // swell and pop on a slow cycle. Wading in it stings (player.js).
+  renderPoison(ctx, sx, sy, h) {
+    const T = this.TILE;
+    ctx.fillStyle = '#101c08'; // sunken bank
+    ctx.fillRect(sx + 2, sy + 2, T - 4, T - 4);
+    ctx.fillStyle = '#2c4d14'; // sludge surface
+    ctx.fillRect(sx + 8, sy + 8, T - 16, T - 16);
+    ctx.fillStyle = '#3f6b1c'; // lit far rim
+    ctx.fillRect(sx + 8, sy + 8, T - 16, 5);
+    const t = performance.now() / 1000;
+    ctx.lineWidth = 1.5;
+    for (let i = 0; i < 3; i++) {
+      const bx = sx + 16 + ((h >> (i * 5)) % 67);
+      const by = sy + 20 + ((h >> (i * 3 + 4)) % 59);
+      const ph = (t * 0.8 + i * 0.33 + (h % 7) / 7) % 1; // bubble life 0->1
+      ctx.strokeStyle = `rgba(140, 200, 90, ${0.5 * (1 - ph)})`;
+      ctx.beginPath();
+      ctx.arc(bx, by, 2 + ph * 4, 0, Math.PI * 2);
+      ctx.stroke();
     }
   },
 
@@ -253,7 +299,8 @@ const Arena = {
       const r = 38 + rand(i * 3) * 24;
       if (Vec.dist(x, y, cx, cy) < 260) continue;                 // spawn
       if (Vec.dist(x, y, CONFIG.altar.x, CONFIG.altar.y) < 200) continue;
-      if (isTrapTile(Math.floor(x / this.TILE), Math.floor(y / this.TILE))) continue;
+      const tix = Math.floor(x / this.TILE), tiy = Math.floor(y / this.TILE);
+      if (isTrapTile(tix, tiy) || isPoisonTile(tix, tiy)) continue;
       if (out.some((t) => Vec.dist(x, y, t.x, t.y) < t.r + r + 20)) continue;
       out.push({ x, y, r, seed: i });
     }
@@ -277,7 +324,8 @@ const Arena = {
       const y = 100 + rand(i * 2 + 1) * (CONFIG.worldHeight - 200);
       if (Vec.dist(x, y, cx, cy) < 220) continue;
       if (Vec.dist(x, y, CONFIG.altar.x, CONFIG.altar.y) < 180) continue;
-      if (isTrapTile(Math.floor(x / this.TILE), Math.floor(y / this.TILE))) continue;
+      const tix = Math.floor(x / this.TILE), tiy = Math.floor(y / this.TILE);
+      if (isTrapTile(tix, tiy) || isPoisonTile(tix, tiy)) continue;
       if (this.trees().some((t) => Vec.dist(x, y, t.x, t.y) < t.r + 70)) continue;
       if (out.some((o) => Vec.dist(x, y, o.x, o.y) < 130)) continue;
       out.push({ x, y, kind: Math.floor(rand(i * 5 + 3) * 3), seed: i });
@@ -370,9 +418,11 @@ const Arena = {
   render(ctx, camera, stage = 1) {
     const o = camera.toScreen(0, 0);
     const forest = stage === 2;
+    const desert = stage === 3;
 
-    // Base coat: dark mortar between flagstones, or black loam under grass.
-    ctx.fillStyle = forest ? '#0d160e' : '#241d2e';
+    // Base coat: dark mortar between flagstones, black loam under grass,
+    // or packed earth under the dunes.
+    ctx.fillStyle = desert ? '#332818' : forest ? '#0d160e' : '#241d2e';
     ctx.fillRect(o.x, o.y, CONFIG.worldWidth, CONFIG.worldHeight);
 
     // Beveled flagstones, styled after the bg.webp tileset: per-tile tone
@@ -387,12 +437,39 @@ const Arena = {
     const STONES = ['#4d4360', '#484057', '#524866', '#453d52'];
     // Tones kept close so the tile grid melts into soft mottling.
     const GRASS = ['#182a1a', '#16281a', '#1a2c1d', '#152618'];
+    const SAND = ['#8a7448', '#84704a', '#8f7a4c', '#7d6a42'];
     for (let ix = Math.max(0, ix0); ix <= ix1; ix++) {
       for (let iy = Math.max(0, iy0); iy <= iy1; iy++) {
         if (ix >= CONFIG.worldWidth / T || iy >= CONFIG.worldHeight / T) continue;
         const sx = ix * T - camera.x, sy = iy * T - camera.y;
-        if (isTrapTile(ix, iy)) { this.renderTrap(ctx, sx, sy, forest); continue; }
+        // The desert has no spike pits — quicksand is its floor hazard.
+        if (!desert && isTrapTile(ix, iy)) { this.renderTrap(ctx, sx, sy, forest); continue; }
         const h = ((ix * 73856093) ^ (iy * 19349663)) >>> 0;
+        if (forest && isPoisonTile(ix, iy)) { this.renderPoison(ctx, sx, sy, h); continue; }
+        if (desert && isQuicksandTile(ix, iy)) { this.renderQuicksand(ctx, sx, sy, h); continue; }
+        if (desert) {
+          // Sun-baked sand (see "desert tileset.jpg"): mottled dune tones,
+          // wind ripples, bleached pebbles on some tiles.
+          ctx.fillStyle = SAND[h % SAND.length];
+          ctx.fillRect(sx, sy, T, T);
+          ctx.strokeStyle = 'rgba(255, 235, 180, 0.10)';
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          for (let i = 0; i < 3; i++) {
+            const rx = sx + 8 + ((h >> (i * 4)) % 67);
+            const ry = sy + 12 + ((h >> (i * 3 + 2)) % 73);
+            ctx.moveTo(rx, ry);
+            ctx.quadraticCurveTo(rx + 12, ry - 5, rx + 24, ry);
+          }
+          ctx.stroke();
+          if (h % 11 === 0) {
+            ctx.fillStyle = 'rgba(226, 214, 180, 0.5)';
+            const px = sx + 18 + (h % 59), py = sy + 20 + (h % 51);
+            ctx.fillRect(px, py, 4, 3);
+            ctx.fillRect(px + 9, py + 6, 3, 3);
+          }
+          continue;
+        }
         if (forest) {
           ctx.fillStyle = GRASS[h % GRASS.length];
           ctx.fillRect(sx, sy, T, T);
@@ -454,9 +531,9 @@ const Arena = {
             s.y < -t.r * 2 || s.y > camera.h + t.r * 2) continue;
         this.renderTree(ctx, s.x, s.y, t.r, t.seed);
       }
-    } else {
+    } else if (!desert) {
       // Blood runes (see "blood rune.webp"), each ringed with candles —
-      // the crypt's summoning circles. The forest floor stays natural.
+      // the crypt's summoning circles. Forest and desert floors stay natural.
       this.RUNES.forEach((c, i) => {
         const s = camera.toScreen(c.x, c.y);
         if (s.x < -c.r - 60 || s.x > camera.w + c.r + 60 ||
@@ -637,6 +714,268 @@ function drawGate(ctx, x, y, open, t) {
   }
 }
 
+// The Jungle Vault — the treasure room behind Stage 2's gate. One big
+// chest in the middle holding the Dash powerup. World-coords room carved
+// out of darkness around the arena center.
+const VAULT = {
+  x: CONFIG.worldWidth / 2 - 600,
+  y: CONFIG.worldHeight / 2 - 420,
+  w: 1200,
+  h: 840,
+};
+
+// The big treasure chest. (x, y) is the ground under its front face;
+// `open` runs 0 (shut) -> 1 (lid tipped back, gold light pouring out).
+function drawChest(ctx, x, y, open, t) {
+  const W = 116, H = 58, lh = 46; // body width/height, lid rise
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.4)';
+  ctx.beginPath();
+  ctx.ellipse(x, y + 6, W * 0.62, 15, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Gold light welling out as the lid parts.
+  if (open > 0) {
+    const g = ctx.createRadialGradient(x, y - H, 6, x, y - H, 140);
+    g.addColorStop(0, `rgba(255, 214, 110, ${0.5 * open})`);
+    g.addColorStop(1, 'rgba(255, 200, 80, 0)');
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.arc(x, y - H, 140, 0, Math.PI * 2); ctx.fill();
+    // Shafts of light reaching up from the mouth
+    ctx.save();
+    ctx.globalAlpha = 0.3 * open;
+    ctx.fillStyle = '#ffe9a0';
+    for (const dx of [-28, 0, 28]) {
+      const hgt = 74 + Math.sin(t * 3 + dx) * 7;
+      ctx.beginPath();
+      ctx.moveTo(x + dx - 6, y - H + 4);
+      ctx.lineTo(x + dx - 14, y - H - hgt);
+      ctx.lineTo(x + dx + 14, y - H - hgt);
+      ctx.lineTo(x + dx + 6, y - H + 4);
+      ctx.closePath();
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  // Body: iron-banded oak strongbox.
+  ctx.fillStyle = '#5d3b21';
+  ctx.fillRect(x - W / 2, y - H, W, H);
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.25)'; // plank seams
+  for (let i = 1; i < 4; i++) ctx.fillRect(x - W / 2, y - H + (H * i) / 4, W, 2);
+  ctx.fillStyle = '#c9a23c'; // gold straps
+  ctx.fillRect(x - W * 0.34 - 5, y - H, 10, H);
+  ctx.fillRect(x + W * 0.34 - 5, y - H, 10, H);
+  ctx.strokeStyle = 'rgba(0, 0, 0, 0.45)';
+  ctx.lineWidth = 2;
+  ctx.strokeRect(x - W / 2, y - H, W, H);
+
+  // Open mouth: dark interior + smoldering gold, revealed under the lid.
+  if (open > 0.15) {
+    ctx.fillStyle = '#241605';
+    ctx.fillRect(x - W / 2 + 4, y - H - 6, W - 8, 10);
+    ctx.fillStyle = `rgba(255, 214, 110, ${0.8 * open})`;
+    ctx.fillRect(x - W / 2 + 8, y - H - 4, W - 16, 5);
+  }
+
+  // Lid: arched, hinged at the back — tips away by squashing upward.
+  ctx.save();
+  ctx.translate(x, y - H);
+  ctx.scale(1, Math.max(0.12, 1 - open * 0.88));
+  const lid = new Path2D();
+  lid.moveTo(-W / 2, 0);
+  lid.quadraticCurveTo(-W * 0.48, -lh, 0, -lh);
+  lid.quadraticCurveTo(W * 0.48, -lh, W / 2, 0);
+  lid.closePath();
+  ctx.fillStyle = '#6b4527';
+  ctx.fill(lid);
+  ctx.strokeStyle = '#c9a23c';
+  ctx.lineWidth = 3;
+  ctx.stroke(lid);
+  ctx.fillStyle = '#c9a23c'; // straps continue over the lid
+  ctx.fillRect(-W * 0.34 - 5, -lh * 0.92, 10, lh * 0.92);
+  ctx.fillRect(W * 0.34 - 5, -lh * 0.92, 10, lh * 0.92);
+  ctx.restore();
+
+  // Lock plate + keyhole on the front.
+  ctx.fillStyle = '#e0bb52';
+  ctx.fillRect(x - 10, y - H - 4, 20, 22);
+  ctx.strokeStyle = 'rgba(0, 0, 0, 0.4)';
+  ctx.strokeRect(x - 10, y - H - 4, 20, 22);
+  ctx.fillStyle = '#241605';
+  ctx.beginPath(); ctx.arc(x, y - H + 3, 3, 0, Math.PI * 2); ctx.fill();
+  ctx.fillRect(x - 1.5, y - H + 3, 3, 7);
+}
+
+// The pyramid dungeon revealed by the Mummy King's fall. (x, y) is the
+// ground under the doorway — the Gate of Descent is drawn over it, so
+// the pyramid is the backdrop the gate is set into.
+function drawPyramid(ctx, x, y) {
+  const W = 440, H = 330; // half-base, height
+  ctx.save();
+  // Ground shadow.
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.3)';
+  ctx.beginPath();
+  ctx.ellipse(x, y + 10, W * 1.05, 30, 0, 0, Math.PI * 2);
+  ctx.fill();
+  // Body.
+  const g = ctx.createLinearGradient(x, y - H, x, y);
+  g.addColorStop(0, '#d9bd82');
+  g.addColorStop(1, '#8a6f42');
+  ctx.fillStyle = g;
+  ctx.beginPath();
+  ctx.moveTo(x - W, y);
+  ctx.lineTo(x, y - H);
+  ctx.lineTo(x + W, y);
+  ctx.closePath();
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(50, 35, 12, 0.6)';
+  ctx.lineWidth = 3;
+  ctx.stroke();
+  // Shaded face: the right slope falls into its own shadow.
+  ctx.fillStyle = 'rgba(40, 28, 10, 0.28)';
+  ctx.beginPath();
+  ctx.moveTo(x, y - H);
+  ctx.lineTo(x + W, y);
+  ctx.lineTo(x + W * 0.25, y);
+  ctx.closePath();
+  ctx.fill();
+  // Masonry courses, tighter toward the top.
+  ctx.strokeStyle = 'rgba(70, 50, 20, 0.35)';
+  ctx.lineWidth = 1.5;
+  for (let i = 1; i < 9; i++) {
+    const f = i / 9;
+    const yy = y - H * f;
+    const half = W * (1 - f);
+    ctx.beginPath();
+    ctx.moveTo(x - half, yy);
+    ctx.lineTo(x + half, yy);
+    ctx.stroke();
+  }
+  // Gold capstone catching the light.
+  ctx.fillStyle = '#ffd166';
+  ctx.shadowColor = '#ffb020';
+  ctx.shadowBlur = 14;
+  ctx.beginPath();
+  ctx.moveTo(x - W * 0.09, y - H * 0.91);
+  ctx.lineTo(x, y - H);
+  ctx.lineTo(x + W * 0.09, y - H * 0.91);
+  ctx.closePath();
+  ctx.fill();
+  ctx.shadowBlur = 0;
+  // Dark doorway the gate stands in.
+  ctx.fillStyle = '#160f06';
+  ctx.beginPath();
+  ctx.moveTo(x - 60, y);
+  ctx.lineTo(x - 60, y - 120);
+  ctx.quadraticCurveTo(x, y - 175, x + 60, y - 120);
+  ctx.lineTo(x + 60, y);
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+}
+
+// A massive weathered statue of the vault's builder — the player's own
+// sprite carved in grey stone, skull bared, eyes hollowed, on a mossy
+// plinth. (x, y) is the ground under the plinth; flip mirrors the pose.
+function drawStatue(ctx, x, y, look, flip, seed) {
+  const rows = [...look.torso, ...CHAR_LEGS.stand];
+  const cols = rows[0].length;
+  const p = 7; // cell size — roughly triple the in-game sprite
+  const wpx = cols * p, hpx = rows.length * p;
+  const rand = (n) => {
+    const v = Math.sin(seed * 77.7 + n * 41.3) * 43758.5453;
+    return v - Math.floor(v);
+  };
+
+  // Ground shadow + two-step stone plinth with creeping moss.
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.4)';
+  ctx.beginPath();
+  ctx.ellipse(x, y + 6, wpx * 0.8, 17, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = '#454b41';
+  ctx.fillRect(x - wpx * 0.72, y - 15, wpx * 1.44, 15);
+  ctx.fillStyle = '#535948';
+  ctx.fillRect(x - wpx * 0.58, y - 28, wpx * 1.16, 13);
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.07)'; // slab catch-lights
+  ctx.fillRect(x - wpx * 0.72, y - 15, wpx * 1.44, 3);
+  ctx.fillRect(x - wpx * 0.58, y - 28, wpx * 1.16, 3);
+  ctx.fillStyle = 'rgba(110, 160, 100, 0.3)';
+  ctx.fillRect(x - wpx * 0.72, y - 4, wpx * 1.44, 4);
+
+  // The figure: stone greys, bone-white skull where skin was, hollow eyes.
+  const x0 = x - wpx / 2, y0 = y - 28 - hpx;
+  for (let ry = 0; ry < rows.length; ry++) {
+    const row = rows[ry];
+    for (let cx = 0; cx < cols; cx++) {
+      const ch = row[flip ? cols - 1 - cx : cx];
+      if (ch === '.') continue;
+      ctx.fillStyle =
+        ch === 'S' ? '#c2bcab' :                       // skull
+        ch === 'E' ? '#252a23' :                       // hollow sockets
+        (ch === 'O' || ch === 'K') ? '#575d52' :       // boots / cape, darker
+        '#6d7367';                                     // the rest: plain stone
+      ctx.fillRect(x0 + cx * p, y0 + ry * p, p + 0.4, p + 0.4);
+    }
+  }
+
+  // Weathering: one long crack down the torso + moss clinging up top.
+  ctx.strokeStyle = 'rgba(28, 32, 26, 0.55)';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  let kx = x + (rand(1) - 0.5) * wpx * 0.4, ky = y0 + hpx * 0.3;
+  ctx.moveTo(kx, ky);
+  for (let i = 0; i < 4; i++) {
+    kx += (rand(i + 2) - 0.5) * 14;
+    ky += hpx * 0.14;
+    ctx.lineTo(kx, ky);
+  }
+  ctx.stroke();
+  ctx.fillStyle = 'rgba(110, 160, 100, 0.28)';
+  for (let i = 0; i < 3; i++) {
+    ctx.fillRect(x0 + rand(i + 8) * (wpx - 14), y0 + rand(i + 12) * hpx * 0.4, 12, 6);
+  }
+}
+
+// The Dash powerup icon: a glowing badge with a double chevron, gold-rimmed.
+function drawDashIcon(ctx, x, y, sc, alpha, t) {
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.translate(x, y);
+  ctx.scale(sc, sc);
+  const g = ctx.createRadialGradient(0, 0, 2, 0, 0, 20);
+  g.addColorStop(0, '#1c3a52');
+  g.addColorStop(1, '#0c1826');
+  ctx.fillStyle = g;
+  ctx.shadowColor = '#5fd8ff';
+  ctx.shadowBlur = 14 + Math.sin(t * 5) * 4;
+  ctx.beginPath(); ctx.arc(0, 0, 20, 0, Math.PI * 2); ctx.fill();
+  ctx.shadowBlur = 0;
+  ctx.strokeStyle = '#ffd76a';
+  ctx.lineWidth = 2.5;
+  ctx.stroke();
+  // Double chevron » with speed ticks trailing behind
+  ctx.strokeStyle = '#bdeeff';
+  ctx.shadowColor = '#5fd8ff';
+  ctx.shadowBlur = 8;
+  ctx.lineWidth = 4;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  for (const ox of [-5, 5]) {
+    ctx.beginPath();
+    ctx.moveTo(ox - 4, -8);
+    ctx.lineTo(ox + 4, 0);
+    ctx.lineTo(ox - 4, 8);
+    ctx.stroke();
+  }
+  ctx.globalAlpha = alpha * 0.6;
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(-15, -5); ctx.lineTo(-11, -5);
+  ctx.moveTo(-16, 2);  ctx.lineTo(-12, 2);
+  ctx.stroke();
+  ctx.restore();
+}
+
 // Game: master state machine + fixed-timestep loop -------------------
 // Compact an entity array in place, keeping only the living —
 // avoids allocating five fresh arrays every frame.
@@ -659,7 +998,7 @@ class Game {
 
   newWorld(stage) {
     this.world = {
-      stage, // 1 | 2 — same rules for now; Stage 2 gets its own later
+      stage, // 1 crypt | 2 dark forest | 3 desert kingdom
       player: new Player(CONFIG.worldWidth / 2, CONFIG.worldHeight / 2),
       enemies: [],
       projectiles: [],
@@ -671,12 +1010,36 @@ class Game {
       time: 0,
       kills: 0,
     };
+    // Stage 3: seed the desert kingdom's breakable structures — towers
+    // (some manned by an archer) and obelisks — kept off the spawn area
+    // and each other. They ride the enemies list: hittable, solid,
+    // depth-sorted like everyone else.
+    if (stage === 3) {
+      const cfg = CONFIG.structures;
+      const rand = (n) => {
+        const v = Math.sin(n * 127.1 + 311.7) * 43758.5453;
+        return v - Math.floor(v);
+      };
+      const placed = [];
+      const total = cfg.towers + cfg.obelisks;
+      for (let i = 0; i < total * 8 && placed.length < total; i++) {
+        const x = 150 + rand(i * 2) * (CONFIG.worldWidth - 300);
+        const y = 150 + rand(i * 2 + 1) * (CONFIG.worldHeight - 300);
+        if (Vec.dist(x, y, CONFIG.worldWidth / 2, CONFIG.worldHeight / 2) < 400) continue;
+        if (placed.some((p) => Vec.dist(x, y, p.x, p.y) < cfg.spacing)) continue;
+        const e = new Enemy(x, y, placed.length < cfg.towers ? 'tower' : 'obelisk');
+        if (e.type === 'tower') e.hasShooter = rand(i * 3 + 7) < cfg.armedChance;
+        placed.push(e);
+        this.world.enemies.push(e);
+      }
+    }
     // Claimed the Crimson Boomerang in a past run: start armed, and mark
     // the altar claimed so the relic never re-materializes on the dais.
     if (Progress.boomerang) {
       this.world.player.stats.boomerang = true;
       this.world.altarClaimed = true;
     }
+    this.world.player.stage = stage;
     Progression.init(this.world.player);
     // Juice state: deltas watched each update drive shake/flash/SFX, so
     // combat code never needs a reference back into the game shell.
@@ -719,10 +1082,12 @@ class Game {
 
   update(dt) {
     const w = this.world;
-    w.time += dt;
-    // Mouse in world coords (screen + camera) for mouse-follow movement.
+    // Mouse in world coords (screen + camera) for mouse-follow movement —
+    // computed before the vault branch so it steers there too.
     Input.mouseWorldX = Input.mouse.x * Camera.zoom + Camera.x;
     Input.mouseWorldY = Input.mouse.y * Camera.zoom + Camera.y;
+    if (w.treasure) return this.updateTreasure(dt);
+    w.time += dt;
     w.player.update(dt, Input, w);
 
     // Altar relic: materializes at the unlock wave; step onto the dais
@@ -810,6 +1175,7 @@ class Game {
     const { ctx, canvas } = this;
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     if (!this.world) return;
+    if (this.world.treasure) return this.renderTreasure();
 
     Arena.render(ctx, Camera, this.world.stage);
 
@@ -817,11 +1183,13 @@ class Game {
     for (const k of this.world.pickups) k.render(ctx, Camera);
 
     // The Gate of Descent (post-boss exit) stands on the floor plane.
+    // Stage 3's gate is set into the revealed pyramid dungeon.
     if (this.world.gate) {
       const g = this.world.gate;
       const s = Camera.toScreen(g.x, g.y);
-      if (s.x > -160 && s.x < Camera.w + 160 &&
-          s.y > -160 && s.y < Camera.h + 160) {
+      if (s.x > -520 && s.x < Camera.w + 520 &&
+          s.y > -420 && s.y < Camera.h + 420) {
+        if (g.pyramid) drawPyramid(ctx, s.x, s.y);
         drawGate(ctx, s.x, s.y, g.open, performance.now() / 1000);
       }
     }
@@ -852,6 +1220,26 @@ class Game {
     // Damage numbers sit above everything in the world.
     for (const f of this.world.floaters) f.render(ctx, Camera);
 
+    // Fog of war: clear around the player, opaque past the sight edge,
+    // so nothing outside can be seen (or targeted — weapons.js). Stage 2's
+    // forest murk, or the Mummy King's sandstorm — sand-colored, half the
+    // sight. Same-color alpha ramp with a doubled inner stop, dodging the
+    // transparent-stop gradient bug noted below. Rebuilt every frame —
+    // it tracks the player.
+    if (this.world.stage === 2 || this.world.sandstorm) {
+      const F = CONFIG.fog;
+      const mul = this.world.sandstorm ? CONFIG.boss3.stormSightMul : 1;
+      const R = F.radius * mul, E = F.edge * mul;
+      const rgb = this.world.sandstorm ? '148, 118, 66' : '7, 13, 6';
+      const p = Camera.toScreen(this.world.player.x, this.world.player.y);
+      const g = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, R + E);
+      g.addColorStop(0, `rgba(${rgb}, 0)`);
+      g.addColorStop(R / (R + E), `rgba(${rgb}, 0)`);
+      g.addColorStop(1, `rgba(${rgb}, 0.96)`);
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+    }
+
     // Screen-space vignette: darkened corners focus the eye on the player
     // and sell the gothic mood. Uses a multiply gradient with fully opaque
     // stops (transparent stops render inconsistently across canvas
@@ -868,8 +1256,10 @@ class Game {
                       (Math.hypot(canvas.width, canvas.height) * 0.6);
       g.addColorStop(0, '#ffffff');        // multiply by white = unchanged
       g.addColorStop(plateau, '#ffffff');  // flat center plateau
-      // Corners darken toward violet-grey in the crypt, mossy grey in the forest.
-      g.addColorStop(1, this.world.stage === 2 ? '#66785f' : '#6f6a80');
+      // Corners darken toward violet-grey in the crypt, mossy grey in the
+      // forest, sun-scorched umber in the desert.
+      g.addColorStop(1, this.world.stage === 3 ? '#8a7452'
+                     : this.world.stage === 2 ? '#66785f' : '#6f6a80');
       this._vignette = g;
       this._vignetteKey = vKey;
     }
@@ -962,9 +1352,281 @@ class Game {
   gameOver() { this._end(false); }
 
   // GGs — the stair taken. Beating Stage 1 unlocks Stage 2 in the menu.
+  // Stage 2's stair always descends into the Jungle Vault: the chest
+  // holds the Dash (until claimed), and the desert gate in the far
+  // corner walks straight down into Stage 3.
   victory() {
     if (this.world.stage === 1) Progress.unlockStage2();
+    if (this.world.stage === 2) return this.enterTreasure();
     this._end(true);
+  }
+
+  // Morph the live world into the vault: same run (score/kills/time kept),
+  // but combat is over — just the room, the player, and the chest.
+  enterTreasure() {
+    const w = this.world;
+    for (const arr of [w.enemies, w.projectiles, w.hazards, w.pickups, w.floaters]) arr.length = 0;
+    w.boss = null;
+    w.gate = null;
+    w.treasure = {
+      // Dash already claimed in a past run: the chest is gone and the
+      // gate is live from the start (t is large so no grab-flash plays).
+      phase: Progress.dash ? 'got' : 'closed', // closed -> opening -> float -> got
+      t: Progress.dash ? 99 : 0,
+      looted: Progress.dash, // chest despawns once its prize is taken
+      chest: { x: VAULT.x + VAULT.w / 2, y: VAULT.y + VAULT.h / 2 - 30 },
+      icon: null,
+      // The Desert Gate, top-left: the vault's one exit — stepping
+      // through descends straight into Stage 3.
+      gate3: { x: VAULT.x + 130, y: VAULT.y + 155, open: 0 },
+    };
+    w.player.x = VAULT.x + VAULT.w / 2;
+    w.player.y = VAULT.y + VAULT.h - 90;
+    Camera.follow(w.player);
+  }
+
+  // Vault sim: walk, touch the chest, watch the powerup ceremony, leave.
+  updateTreasure(dt) {
+    const w = this.world, T = w.treasure;
+    w.player.update(dt, Input, w);
+    // Keep the player inside the vault walls.
+    const m = 34 + w.player.radius;
+    w.player.x = Vec.clamp(w.player.x, VAULT.x + m, VAULT.x + VAULT.w - m);
+    w.player.y = Vec.clamp(w.player.y, VAULT.y + m + 30, VAULT.y + VAULT.h - m);
+    for (const f of w.floaters) f.update(dt);
+    cullDead(w.floaters);
+    Camera.follow(w.player);
+
+    T.t += dt;
+    const headX = w.player.x, headY = w.player.y - w.player.radius * 4.4;
+    if (T.phase === 'closed') {
+      if (Vec.dist(w.player.x, w.player.y, T.chest.x, T.chest.y) < 90) {
+        T.phase = 'opening';
+        T.t = 0;
+        Sfx.kill(); // creaking-latch stand-in
+      }
+    } else if (T.phase === 'opening') {
+      if (T.t >= 0.6) {
+        T.phase = 'float';
+        T.t = 0;
+        T.icon = { x: T.chest.x, y: T.chest.y - 70 };
+      }
+    } else if (T.phase === 'float') {
+      // Icon drifts from the chest mouth to above the player's head.
+      const f = Math.min(1, T.t / 1.2);
+      const e = f * f * (3 - 2 * f); // smoothstep
+      T.icon.x = T.chest.x + (headX - T.chest.x) * e;
+      T.icon.y = (T.chest.y - 70) + (headY - (T.chest.y - 70)) * e - Math.sin(e * Math.PI) * 34;
+      if (f >= 1) {
+        T.phase = 'got';
+        T.t = 0;
+        Progress.unlockDash();
+        w.player.glowT = 1.5;
+        Sfx.levelup();
+        w.floaters.push(new FloatingText(
+          headX, headY - 34,
+          'DASH UNLOCKED!', { color: '#ffd76a', size: 22, life: 1.8 }
+        ));
+      }
+    } else { // got: icon hovers over the glowing player while it fades
+      if (T.icon) {
+        T.icon.x = w.player.x;
+        T.icon.y = w.player.y - w.player.radius * 4.4;
+      }
+      // Ceremony over: the emptied chest crumbles away for good.
+      if (T.t > 2.2) T.looted = true;
+    }
+
+    // The Desert Gate stays sealed until the Dash is claimed, then swings
+    // open as the player nears; stepping through unlocks Stage 3 and
+    // walks straight down into it — smooth progression, no detours.
+    if (T.phase === 'got') {
+      const d3 = Vec.dist(w.player.x, w.player.y, T.gate3.x, T.gate3.y);
+      if (d3 < 170) T.gate3.open = Math.min(1, T.gate3.open + dt / 0.9);
+      if (T.gate3.open >= 1 && d3 < 40) {
+        Progress.unlockStage3();
+        this.start(3);
+      }
+    }
+  }
+
+  renderTreasure() {
+    const { ctx, canvas } = this;
+    const w = this.world, T = w.treasure;
+    const t = performance.now() / 1000;
+
+    // Darkness beyond the vault walls.
+    ctx.fillStyle = '#040703';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    const o = Camera.toScreen(VAULT.x, VAULT.y);
+
+    // Floor: mottled jungle moss, tile-hashed like the arenas.
+    const TL = Arena.TILE;
+    const MOSS = ['#1c3120', '#193021', '#203726', '#172b1d'];
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(o.x, o.y, VAULT.w, VAULT.h);
+    ctx.clip();
+    for (let ix = Math.floor(VAULT.x / TL); ix <= Math.floor((VAULT.x + VAULT.w) / TL); ix++) {
+      for (let iy = Math.floor(VAULT.y / TL); iy <= Math.floor((VAULT.y + VAULT.h) / TL); iy++) {
+        const h = ((ix * 73856093) ^ (iy * 19349663)) >>> 0;
+        const s = Camera.toScreen(ix * TL, iy * TL);
+        ctx.fillStyle = MOSS[h % MOSS.length];
+        ctx.fillRect(s.x, s.y, TL, TL);
+        // Sparse fern tufts
+        ctx.strokeStyle = 'rgba(90, 150, 80, 0.35)';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        for (let i = 0; i < 3; i++) {
+          const fx = s.x + 12 + ((h >> (i * 4)) % 79);
+          const fy = s.y + 16 + ((h >> (i * 3 + 2)) % 71);
+          ctx.moveTo(fx, fy);
+          ctx.lineTo(fx - 4, fy - 9);
+          ctx.moveTo(fx, fy);
+          ctx.lineTo(fx + 4, fy - 9);
+        }
+        ctx.stroke();
+      }
+    }
+    // Warm ambience pooled around the chest.
+    const cs = Camera.toScreen(T.chest.x, T.chest.y);
+    const amb = ctx.createRadialGradient(cs.x, cs.y - 30, 20, cs.x, cs.y - 30, 300);
+    amb.addColorStop(0, 'rgba(255, 200, 110, 0.14)');
+    amb.addColorStop(1, 'rgba(255, 200, 110, 0)');
+    ctx.fillStyle = amb;
+    ctx.fillRect(o.x, o.y, VAULT.w, VAULT.h);
+
+    // Spilled coins glinting around the chest — treasure that didn't fit.
+    ctx.fillStyle = '#e0bb52';
+    for (let i = 0; i < 10; i++) {
+      const a = i * 2.4, rr = 70 + (i * 53 % 60);
+      const gx = cs.x + Math.cos(a) * rr, gy = cs.y + Math.sin(a) * rr * 0.5 + 10;
+      ctx.beginPath();
+      ctx.ellipse(gx, gy, 4, 2.2, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // Glowing mushroom clusters tucked along the walls.
+    for (const [fx, fy] of [
+      [0.09, 0.16], [0.91, 0.62], [0.08, 0.85], [0.55, 0.09], [0.35, 0.93], [0.93, 0.28],
+    ]) {
+      const mx = o.x + fx * VAULT.w, my = o.y + fy * VAULT.h;
+      ctx.save();
+      ctx.shadowColor = '#5fd8ff';
+      for (let i = 0; i < 3; i++) {
+        const sx2 = mx + i * 11 - 11, sy2 = my + (i % 2) * 6;
+        const h2 = 8 + (i * 3) % 6;
+        ctx.shadowBlur = 7 + Math.sin(t * 2.5 + mx + i) * 3;
+        ctx.fillStyle = '#8a9b86';
+        ctx.fillRect(sx2 - 1.5, sy2 - h2, 3, h2);
+        ctx.fillStyle = '#7fd8e8';
+        ctx.beginPath();
+        ctx.ellipse(sx2, sy2 - h2, 6, 4, 0, Math.PI, 0);
+        ctx.fill();
+      }
+      ctx.restore();
+    }
+    ctx.restore();
+
+    // Walls: heavy jungle-stone border with a mossy inlay + hanging vines.
+    ctx.strokeStyle = '#2b3627';
+    ctx.lineWidth = 26;
+    ctx.strokeRect(o.x, o.y, VAULT.w, VAULT.h);
+    ctx.strokeStyle = 'rgba(122, 196, 124, 0.45)';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(o.x + 15, o.y + 15, VAULT.w - 30, VAULT.h - 30);
+    ctx.strokeStyle = 'rgba(70, 130, 70, 0.6)';
+    ctx.lineWidth = 3;
+    ctx.lineCap = 'round';
+    for (let i = 0; i < 13; i++) { // vines draped off the top wall
+      const vx = o.x + 60 + i * (VAULT.w - 120) / 12;
+      const len = 34 + ((i * 37) % 42);
+      ctx.beginPath();
+      ctx.moveTo(vx, o.y + 10);
+      ctx.quadraticCurveTo(vx + 8, o.y + len * 0.6, vx + Math.sin(t * 0.8 + i) * 4, o.y + len);
+      ctx.stroke();
+    }
+
+    // Braziers flanking the chest.
+    for (const side of [-1, 1]) {
+      const bx = cs.x + side * 150, by = cs.y - 6;
+      const flick = 0.75 + Math.sin(t * 7 + side) * 0.25;
+      ctx.fillStyle = `rgba(255, 160, 60, ${0.05 + 0.05 * flick})`;
+      ctx.beginPath(); ctx.ellipse(bx, by + 4, 44, 18, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#3a4437';
+      ctx.fillRect(bx - 4, by - 26, 8, 26);
+      ctx.beginPath(); ctx.ellipse(bx, by - 26, 14, 6, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.save();
+      ctx.shadowColor = 'rgba(255, 150, 40, 0.9)';
+      ctx.shadowBlur = 10 + flick * 8;
+      ctx.fillStyle = '#ffd27a';
+      ctx.beginPath();
+      ctx.ellipse(bx, by - 34, 5, 8 + flick * 3, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
+
+    // The Desert Gate, top-left — the way down to Stage 3.
+    const g3 = Camera.toScreen(T.gate3.x, T.gate3.y);
+    drawGate(ctx, g3.x, g3.y, T.gate3.open, t);
+    ctx.save();
+    ctx.font = 'bold 15px system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillStyle = 'rgba(255, 210, 120, 0.85)';
+    ctx.fillText('THE DESERT GATE', g3.x, g3.y - 150);
+    ctx.restore();
+
+    // Four colossal statues of the fallen — the player carved in stone —
+    // ringing the chest, each pair turned to face it.
+    const statues = [
+      [VAULT.x + VAULT.w * 0.22, VAULT.y + VAULT.h * 0.30],
+      [VAULT.x + VAULT.w * 0.78, VAULT.y + VAULT.h * 0.30],
+      [VAULT.x + VAULT.w * 0.22, VAULT.y + VAULT.h * 0.80],
+      [VAULT.x + VAULT.w * 0.78, VAULT.y + VAULT.h * 0.80],
+    ];
+
+    // Statues + chest + player, depth-sorted so overlaps read right.
+    const openFrac = T.phase === 'closed' ? 0
+                   : T.phase === 'opening' ? Math.min(1, T.t / 0.6) : 1;
+    const drawables = [
+      // The chest despawns once its prize has been carried off.
+      ...(T.looted ? [] : [{ y: T.chest.y, draw: () => drawChest(ctx, cs.x, cs.y, openFrac, t) }]),
+      { y: w.player.y, draw: () => w.player.render(ctx, Camera) },
+      ...statues.map(([sx, sy], i) => ({
+        y: sy,
+        draw: () => {
+          const p = Camera.toScreen(sx, sy);
+          drawStatue(ctx, p.x, p.y, w.player.look, sx > T.chest.x, i + 1);
+        },
+      })),
+    ];
+    drawables.sort((a, b) => a.y - b.y);
+    for (const d of drawables) d.draw();
+
+    // The floating powerup icon.
+    if (T.icon) {
+      const si = Camera.toScreen(T.icon.x, T.icon.y);
+      // Hovers in place after the flash, fading out with the ceremony.
+      const alpha = T.phase === 'got' ? Vec.clamp(1 - (T.t - 1.0) / 0.6, 0, 1) : 1;
+      const bobY = T.phase === 'got' ? Math.sin(t * 3) * 3 : 0;
+      if (alpha > 0) drawDashIcon(ctx, si.x, si.y + bobY, 1.15, alpha, t);
+    }
+
+    // The grab flash: a quick white pop at the icon + a faint screen kiss.
+    if (T.phase === 'got' && T.t < 0.35) {
+      const f = T.t / 0.35;
+      const si = Camera.toScreen(T.icon.x, T.icon.y);
+      ctx.globalAlpha = (1 - f) * 0.9;
+      ctx.fillStyle = '#fff';
+      ctx.beginPath(); ctx.arc(si.x, si.y, 10 + f * 70, 0, Math.PI * 2); ctx.fill();
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = `rgba(255, 255, 255, ${0.16 * (1 - f)})`;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+    }
+
+    for (const f of w.floaters) f.render(ctx, Camera);
+    Hud.render(w);
   }
 
   _end(victory) {

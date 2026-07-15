@@ -14,7 +14,7 @@
 */
 
 import { CONFIG } from './config.js';
-import { Entity, FloatingText, Spit } from './entities.js';
+import { Entity, FloatingText, Spit, Enemy, Bandage } from './entities.js';
 
 const TAU = Math.PI * 2;
 
@@ -267,12 +267,13 @@ export class Serpent extends Entity {
       const hd = Math.hypot(player.x - this.x, player.y - this.y);
       if (!D.hit && hd < this.radius + player.radius + 6) {
         D.hit = true;
-        player.takeDamage(cfg.dash.damage);
-        player._hurtCd = 0.6;
-        world.floaters.push(new FloatingText(
-          player.x, player.y - player.radius * 1.6,
-          Math.round(cfg.dash.damage), { color: '#ff5555', size: 20 }
-        ));
+        if (player.takeDamage(cfg.dash.damage)) {
+          player._hurtCd = 0.6;
+          world.floaters.push(new FloatingText(
+            player.x, player.y - player.radius * 1.6,
+            Math.round(cfg.dash.damage), { color: '#ff5555', size: 20 }
+          ));
+        }
       }
       if (f >= 1) {
         // The snap back — the whole point of the move: strike and recoil.
@@ -465,6 +466,268 @@ export class Serpent extends Entity {
   }
 }
 
+// The Mummy King (Stage 3 boss) --------------------------------------------
+// A colossal mummy. Shambles after the player, reels them in with the
+// telegraphed bandage shot, and raises scarab broods every few seconds.
+// At half hp it goes behind a shield (invincible), whips up a permanent
+// sandstorm (game.js halves sight; weapons.js can't aim past it), raises
+// a 20-scarab horde — the shield holds until every scarab on the field
+// is dead — and from then on also hurls big black orbs.
+export class MummyKing extends Entity {
+  constructor(x, y) {
+    const cfg = CONFIG.boss3;
+    super(x, y, cfg.radius);
+    this.hp = cfg.hp;
+    this.maxHp = cfg.hp;
+    this.damage = cfg.contactDamage;
+    this.xp = cfg.xp;
+    this.isBoss = true;
+    this.invulnerable = false; // true while the storm shield holds
+    this.state = 'arrive';     // arrive -> combat
+    this.flip = false;
+    this._hitFlash = 0;
+    this._summonCd = 2;        // the first brood arrives shortly after it does
+    this._pullCd = 3;
+    this._bWindup = 0;         // > 0 while the bandage lane is telegraphed
+    this._shotCd = 0;
+    this._stormed = false;     // half-hp phase fired (once, permanent storm)
+  }
+
+  flash() { this._hitFlash = 0.08; }
+
+  _raiseScarabs(world, n) {
+    for (let i = 0; i < n; i++) {
+      const a = (TAU * i) / n + Math.random() * 0.4;
+      const e = new Enemy(
+        this.x + Math.cos(a) * (this.radius + 60),
+        this.y + Math.sin(a) * (this.radius + 60),
+        'scarab'
+      );
+      world.enemies.push(e);
+    }
+  }
+
+  update(dt, player, world) {
+    if (this._hitFlash > 0) this._hitFlash -= dt;
+    const cfg = CONFIG.boss3;
+
+    const dx = player.x - this.x;
+    const dy = player.y - this.y;
+    const d = Math.hypot(dx, dy) || 1;
+    if (dx < 0) this.flip = true;
+    else if (dx > 0) this.flip = false;
+
+    if (this.state === 'arrive') {
+      this.x += (dx / d) * cfg.arriveSpeed * dt;
+      this.y += (dy / d) * cfg.arriveSpeed * dt;
+      if (d < 480) this.state = 'combat';
+      return;
+    }
+
+    // Half hp: shield up, sandstorm rises, the horde crawls out.
+    if (!this._stormed && this.hp <= this.maxHp * cfg.shieldAt) {
+      this._stormed = true;
+      this.invulnerable = true;
+      world.sandstorm = true;
+      this._raiseScarabs(world, cfg.summon.burst);
+      world.flybyRoar = true; // roar + camera rumble (game.js)
+      world.floaters.push(new FloatingText(
+        this.x, this.y - this.radius * 2.2, 'THE SANDS RISE...',
+        { color: '#e0c37a', size: 22, life: 2.5 }
+      ));
+    }
+
+    // The shield holds until every scarab on the field is dead — and no
+    // new broods are raised while it does.
+    if (this.invulnerable &&
+        !world.enemies.some((e) => e.alive && e.type === 'scarab')) {
+      this.invulnerable = false;
+      this._summonCd = cfg.summon.interval;
+    }
+
+    if (!this.invulnerable) {
+      this._summonCd -= dt;
+      if (this._summonCd <= 0) {
+        this._summonCd = cfg.summon.interval;
+        this._raiseScarabs(world, cfg.summon.count);
+      }
+    }
+
+    // Black orbs, storm phase onward — bigger and meaner than any spit.
+    if (this._stormed) {
+      this._shotCd -= dt;
+      if (this._shotCd <= 0 && d < cfg.shot.range) {
+        this._shotCd = cfg.shot.cooldown;
+        const oy = this.y - this.radius; // thrown from the wrapped chest
+        const ax = dx, ay = player.y - oy;
+        const ad = Math.hypot(ax, ay) || 1;
+        const s = new Spit(
+          this.x, oy,
+          (ax / ad) * cfg.shot.speed, (ay / ad) * cfg.shot.speed,
+          cfg.shot.damage, '#1a1420'
+        );
+        s.radius = cfg.shot.radius;
+        world.hazards.push(s);
+      }
+    }
+
+    // Bandage shot: same telegraph contract as the small mummies.
+    const P = cfg.pull;
+    if (this._bWindup > 0) {
+      this._bWindup -= dt; // rooted while the lane sharpens
+      if (this._bWindup <= 0) world.hazards.push(new Bandage(this, this._bAng, P));
+      return;
+    }
+    this._pullCd -= dt;
+    if (this._pullCd <= 0 && d < P.range && d > 150) {
+      this._pullCd = P.cooldown;
+      this._bWindup = P.windup;
+      this._bAng = Math.atan2(player.y - (this.y - this.radius), dx);
+      return;
+    }
+
+    // Shamble after the player.
+    this.x += (dx / d) * cfg.speed * dt;
+    this.y += (dy / d) * cfg.speed * dt;
+    this.x = Math.max(60, Math.min(CONFIG.worldWidth - 60, this.x));
+    this.y = Math.max(60, Math.min(CONFIG.worldHeight - 60, this.y));
+  }
+
+  render(ctx, camera) {
+    const s = camera.toScreen(this.x, this.y);
+    const t = performance.now() / 1000;
+    const r = this.radius;
+    const sway = Math.sin(t * 1.2) * r * 0.04;
+    const h = r * 2.6, w = r * 1.5;
+    const top = s.y - h;
+
+    // Bandage lane telegraph, under everything.
+    if (this._bWindup > 0) {
+      const P = CONFIG.boss3.pull;
+      const urgency = 1 - this._bWindup / P.windup;
+      ctx.save();
+      ctx.strokeStyle = `rgba(240, 230, 200, ${0.25 + urgency * 0.45})`;
+      ctx.lineWidth = 3;
+      ctx.setLineDash([10, 10]);
+      ctx.lineDashOffset = -t * 60;
+      ctx.beginPath();
+      ctx.moveTo(s.x, s.y - r);
+      ctx.lineTo(s.x + Math.cos(this._bAng) * P.range,
+                 s.y - r + Math.sin(this._bAng) * P.range);
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    // Ground shadow.
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.35)';
+    ctx.beginPath();
+    ctx.ellipse(s.x, s.y + 6, r * 1.3, r * 0.45, 0, 0, TAU);
+    ctx.fill();
+
+    // Body: the small mummy's slab silhouette, scaled to a colossus.
+    const p = new Path2D();
+    p.moveTo(s.x - w * 0.72 + sway, s.y);
+    p.quadraticCurveTo(s.x - w * 0.95 + sway, top + h * 0.45, s.x - w * 0.5 + sway, top + h * 0.18);
+    p.quadraticCurveTo(s.x + sway * 2, top - r * 0.25, s.x + w * 0.5 + sway, top + h * 0.18);
+    p.quadraticCurveTo(s.x + w * 0.95 + sway, top + h * 0.45, s.x + w * 0.72 + sway, s.y);
+    p.closePath();
+    const g = ctx.createLinearGradient(s.x, top, s.x, s.y);
+    g.addColorStop(0, '#ddd0aa');
+    g.addColorStop(1, '#6e6349');
+    ctx.fillStyle = g;
+    ctx.fill(p);
+    ctx.strokeStyle = 'rgba(60, 50, 30, 0.7)';
+    ctx.lineWidth = 3;
+    ctx.stroke(p);
+
+    // Wrap passes.
+    ctx.strokeStyle = 'rgba(90, 78, 52, 0.55)';
+    ctx.lineWidth = 2.5;
+    for (let i = 0; i < 8; i++) {
+      const wy = top + h * (0.12 + i * 0.11);
+      const ww = w * (0.6 + Math.sin(i * 2.7) * 0.18);
+      ctx.beginPath();
+      ctx.moveTo(s.x - ww + sway, wy);
+      ctx.quadraticCurveTo(s.x + sway, wy + 6, s.x + ww + sway, wy - 3);
+      ctx.stroke();
+    }
+
+    // Loose strips whipping in its own storm.
+    ctx.strokeStyle = '#c9bd97';
+    ctx.lineWidth = 4;
+    ctx.lineCap = 'round';
+    for (const [ax, ay, len, ph] of [[-0.65, 0.2, 0.6, 0], [0.6, 0.5, 0.5, 2.1], [-0.3, 0.75, 0.4, 4.2]]) {
+      const bx = s.x + w * ax + sway, by = top + h * ay;
+      ctx.beginPath();
+      ctx.moveTo(bx, by);
+      ctx.quadraticCurveTo(bx + Math.sin(t * 2.6 + ph) * r * 0.3, by + r * len,
+                           bx + Math.sin(t * 1.9 + ph) * r * 0.5, by + r * len * 1.9);
+      ctx.stroke();
+    }
+
+    // Pharaoh headdress: gold-and-lapis nemes over the eye slit.
+    ctx.fillStyle = '#d9b23c';
+    ctx.beginPath();
+    ctx.moveTo(s.x - w * 0.55 + sway, top + h * 0.13);
+    ctx.lineTo(s.x + sway, top - r * 0.34);
+    ctx.lineTo(s.x + w * 0.55 + sway, top + h * 0.13);
+    ctx.closePath();
+    ctx.fill();
+    ctx.strokeStyle = '#274a8a';
+    ctx.lineWidth = 3;
+    ctx.stroke();
+
+    // Eye slit with burning gold eyes.
+    ctx.fillStyle = '#241c0e';
+    ctx.fillRect(s.x - w * 0.42 + sway, top + h * 0.15, w * 0.84, r * 0.34);
+    ctx.save();
+    ctx.fillStyle = '#ffd166';
+    ctx.shadowColor = '#ffb020';
+    ctx.shadowBlur = 12;
+    for (const dxr of [-0.3, 0.3]) {
+      ctx.beginPath();
+      ctx.arc(s.x + w * dxr + sway, top + h * 0.15 + r * 0.17, 4, 0, TAU);
+      ctx.fill();
+    }
+    ctx.restore();
+
+    // Storm shield: a humming sand-gold bubble while the horde lives.
+    if (this.invulnerable) {
+      ctx.save();
+      ctx.strokeStyle = `rgba(224, 195, 122, ${0.55 + Math.sin(t * 6) * 0.2})`;
+      ctx.fillStyle = 'rgba(224, 195, 122, 0.08)';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.arc(s.x, s.y - h * 0.5, r * 1.75, 0, TAU);
+      ctx.fill();
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    if (this._hitFlash > 0) {
+      ctx.save();
+      ctx.globalAlpha = (this._hitFlash / 0.08) * 0.5;
+      ctx.fillStyle = '#fff';
+      ctx.fill(p);
+      ctx.restore();
+    }
+
+    // Boss HP bar (same language as the Dragon's).
+    const bw = r * 3.4, bh = 7;
+    const bx = s.x - bw / 2, by = top - 22;
+    const frac = Math.max(0, this.hp / this.maxHp);
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.55)';
+    ctx.beginPath(); ctx.roundRect(bx - 1.5, by - 1.5, bw + 3, bh + 3, 4); ctx.fill();
+    ctx.fillStyle = '#3a2f18';
+    ctx.beginPath(); ctx.roundRect(bx, by, bw, bh, 3); ctx.fill();
+    ctx.fillStyle = '#e0c37a';
+    ctx.beginPath(); ctx.roundRect(bx, by, bw * frac, bh, 3); ctx.fill();
+    ctx.strokeStyle = 'rgba(255, 226, 150, 0.6)';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(bx, by, bw, bh);
+  }
+}
+
 // The Dragon --------------------------------------------------------------
 export class Dragon extends Entity {
   // Pass flyby: { vx, vy } for the strafing cameo (waves 5, 10, ...): it
@@ -577,8 +840,8 @@ export class Dragon extends Entity {
         const ang = Math.atan2(dy, dx);
         let diff = ang - this._swipeAng;
         diff = Math.atan2(Math.sin(diff), Math.cos(diff));
-        if (d <= m.range + player.radius && Math.abs(diff) <= m.arc / 2) {
-          player.takeDamage(m.damage);
+        if (d <= m.range + player.radius && Math.abs(diff) <= m.arc / 2 &&
+            player.takeDamage(m.damage)) {
           player._hurtCd = 0.6;
           world.floaters.push(new FloatingText(
             player.x, player.y - player.radius * 1.6,

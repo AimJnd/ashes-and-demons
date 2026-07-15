@@ -73,12 +73,52 @@ export const CONFIG = {
   // The altar (far from spawn) where the Crimson Boomerang relic waits.
   altar: { x: 4520, y: 520 },
 
+  // Dash (unlocked in the jungle vault after Stage 2). Space/Shift burns
+  // stamina for a burst of speed along the current heading.
+  dash: {
+    max: 100,       // stamina pool
+    cost: 50,       // per dash
+    regen: 2,       // stamina per second
+    speed: 760,     // burst speed
+    duration: 0.2,  // seconds the burst lasts
+  },
+
   // Spike-trap tiles (see bg.webp). Standing on one past the grace
   // period deals damage every tick interval until you step off.
   trap: {
     damage: 8,
     grace: 0.8,      // seconds you can stand on spikes before they bite
     interval: 0.75,  // seconds between damage ticks while you stay
+  },
+
+  // Stage 2 poison pools: sting on contact and keep ticking while you
+  // wade. No grace period — the green sludge is its own warning.
+  poison: {
+    damage: 3,
+    interval: 0.5,   // seconds between ticks while you stand in it
+  },
+
+  // Stage 2 fog: sight is clear out to `radius`, fades to opaque over
+  // `edge`. Weapons can't acquire targets past the fade (weapons.js).
+  fog: {
+    radius: 380,
+    edge: 160,
+  },
+
+  // Stage 3 quicksand: wading through it slows the stride (dash still
+  // punches through at full speed — it's the escape tool).
+  quicksand: {
+    slowMul: 0.45,
+  },
+
+  // Stage 3 structures scattered at map gen (game.js): breakable towers
+  // (some manned by an archer that drops down when it collapses) and
+  // obelisks. Counts + spacing for the seeded scatter.
+  structures: {
+    towers: 12,
+    obelisks: 16,
+    armedChance: 0.6,  // fraction of towers that carry an archer
+    spacing: 300,      // min distance between structures
   },
 
   // XP / leveling. xpForLevel(n) lives in progression (systems.js).
@@ -164,27 +204,57 @@ export const CONFIG = {
   // fans at range, and lunges — a telegraphed dash straight to the
   // player's marked position, then snaps back to where it coiled.
   boss2: {
-    hp: 3200,
+    hp: 3800,
     radius: 40,            // head radius (the hittable body)
-    speed: 95,             // slither chase speed
+    speed: 115,            // slither chase speed
     arriveSpeed: 280,
-    contactDamage: 14,
+    contactDamage: 18,
     xp: 60,
     gold: 120,
     venom: {
-      cooldown: 4,         // seconds between spit fans
+      cooldown: 2.8,       // seconds between spit fans
       range: 620,          // only spits when player is within this
-      count: 5,            // globs per fan
-      spread: (44 * Math.PI) / 180,
-      speed: 320,
-      damage: 14,          // per glob
+      count: 7,            // globs per fan
+      spread: (52 * Math.PI) / 180,
+      speed: 380,
+      damage: 16,          // per glob
     },
     dash: {
       range: 560,          // lunges when player is within this
-      windup: 0.85,        // telegraph time — the beam shows the lane
+      windup: 0.65,        // telegraph time — the beam shows the lane
       speed: 1500,         // lunge travel speed
-      damage: 34,          // one hit if caught in the lane
-      cooldown: 5,
+      damage: 42,          // one hit if caught in the lane
+      cooldown: 3.5,
+    },
+  },
+
+  // Stage 3 boss (boss.js: MummyKing). A colossal mummy that shambles
+  // after the player, reels them in with the bandage shot, and summons
+  // scarab broods. At shieldAt hp it goes invincible behind a shield,
+  // raises a permanent sandstorm (half sight), spawns `burst` scarabs —
+  // the shield holds until every scarab on the field is dead — and from
+  // then on also hurls big black orbs.
+  boss3: {
+    hp: 4500,
+    radius: 70,            // a GIANT
+    speed: 42,
+    arriveSpeed: 240,
+    contactDamage: 22,
+    xp: 80,
+    gold: 150,
+    shieldAt: 0.5,         // hp fraction that triggers the storm phase
+    stormSightMul: 0.5,    // sandstorm: half the Stage 2 fog's sight
+    summon: {
+      interval: 7,         // seconds between scarab broods
+      count: 3,            // scarabs per brood
+      burst: 20,           // scarabs raised with the shield
+    },
+    pull: {
+      range: 640, windup: 1, speed: 950, damage: 14,
+      cooldown: 5, pullSpeed: 1500,
+    },
+    shot: {                // black orbs, storm phase onward
+      cooldown: 1.6, range: 640, speed: 300, damage: 20, radius: 14,
     },
   },
 };
@@ -200,6 +270,29 @@ export const ENEMIES = {
              range: 380, cooldown: 2.4, spitSpeed: 300 },
   // The dragon's brood — only spawn as the wave-25 escort.
   wyvern: { hp: 70,  speed: 115, damage: 14, radius: 15, xp: 5, gold: 4, color: '#ff8c42', behavior: 'chase' },
+
+  // Stage 3 — the desert kingdom -------------------------------------
+  // Demonic scarab: winds up and charges in a straight burst when far,
+  // scuttles in for contact bites when close.
+  scarab: { hp: 45, speed: 95, damage: 12, radius: 15, xp: 3, gold: 2, color: '#b3541e', behavior: 'charge',
+            chargeRange: 320, chargeSpeed: 620, chargeTime: 0.55, chargeCooldown: 2.2, windup: 0.4 },
+  // Mummy: hulking bandaged colossus. Huge hp pool; rewraps to full if
+  // left undamaged for healDelay. Fires a telegraphed bandage line that
+  // reels the player in. The spawner marches in 4+wave of them per wave
+  // (5 at wave 1, 6 at wave 2, ...) on their own clock.
+  mummy: { hp: 420, speed: 38, damage: 24, radius: 30, xp: 12, gold: 8, color: '#cfc3a0', behavior: 'mummy',
+           healDelay: 5,
+           pull: { range: 520, windup: 0.9, speed: 900, damage: 10, cooldown: 4.5, pullSpeed: 1500 } },
+  // The tower archer once its perch collapses — a ground skirmisher.
+  shooter: { hp: 50, speed: 80, damage: 14, radius: 14, xp: 5, gold: 4, color: '#d9a441', behavior: 'spit',
+             range: 420, cooldown: 2, spitSpeed: 340 },
+  // Breakable structures (spawned at map gen, not by waves). Towers may
+  // carry an archer (hasShooter, set at spawn) who shoots from the top —
+  // out of melee reach until the tower falls and drops them down.
+  tower:   { hp: 260, speed: 0, damage: 0, radius: 30, xp: 8, gold: 6, color: '#c8a86b', behavior: 'static',
+             structure: true, range: 460, cooldown: 2.2, spitSpeed: 340, shotDamage: 14 },
+  obelisk: { hp: 120, speed: 0, damage: 0, radius: 18, xp: 4, gold: 3, color: '#b59a68', behavior: 'static',
+             structure: true },
 };
 
 // Upgrade pool. id is stable; effect mutates the player's stat block.
@@ -238,7 +331,7 @@ export const UPGRADES = [
   { id: 'twin_shot', name: 'Twin Shot', tier: 'rare', weight: 0.25,
     desc: 'Fire an extra projectile in a spread (stacks up to 3 shots)',
     note: 'Ranged only · stacks ×2 · carries to the Spirit Blade: specter follow-up slashes',
-    requires: (p) => p.hasWeapon('ranged') && (p.stats.multishot || 1) < 3,
+    requires: (p) => p.hasWeapon('ranged') && (p.stats.multishot || 1) < 2,
     effect: (p) => { p.stats.multishot = (p.stats.multishot || 1) + 1; } },
   // Echo Slash — melee evolution: a spectral reverse slash covers your back.
   { id: 'echo_slash', name: 'Echo Slash', tier: 'rare', weight: 0.25,
@@ -247,12 +340,13 @@ export const UPGRADES = [
     requires: (p) => p.hasWeapon('melee') && !p.stats.echo,
     effect: (p) => { p.stats.echo = true; } },
   // Vampiric Rites — lifesteal on ALL damage dealt (any weapon, nova too).
-  // Shelved for now; uncomment to bring it back (combat hook + icon still live).
-  // { id: 'lifesteal', name: 'Vampiric Rites', tier: 'rare', weight: 0.25,
-  //   desc: 'Heal 6% of all damage you deal (stacks up to 18%)',
-  //   note: 'Stacks ×3',
-  //   requires: (p) => (p.stats.lifesteal || 0) < 0.18,
-  //   effect: (p) => { p.stats.lifesteal = (p.stats.lifesteal || 0) + 0.06; } },
+  // Desert-blooded: only enters the pool from Stage 3 on (p.stage is
+  // stamped on the player by game.js newWorld).
+  { id: 'lifesteal', name: 'Vampiric Rites', tier: 'rare', weight: 0.25,
+    desc: 'Heal 2% of all damage you deal (stacks up to 6%)',
+    note: 'Stage 3+ · stacks ×3',
+    requires: (p) => p.stage >= 3 && (p.stats.lifesteal || 0) < 0.06,
+    effect: (p) => { p.stats.lifesteal = (p.stats.lifesteal || 0) + 0.02; } },
 
   // Epics ------------------------------------------------------------------
   // Chrono Field — permanent slow aura around the player.
@@ -275,22 +369,42 @@ export const UPGRADES = [
     effect: (p) => { p.stats.boltLevel = (p.stats.boltLevel || 0) + 1; } },
 ];
 
-// Arena tiles. One hash decides each tile's look AND whether it's a spike
-// trap, so the renderer (game.js) and the damage check (player.js) can
-// never disagree about where the traps are.
+// Arena tiles. One hash decides each tile's look AND whether it's a
+// hazard, so the renderer (game.js) and the damage checks (player.js)
+// can never disagree about where the hazards are.
 export const TILE = 100;
-export function isTrapTile(ix, iy) {
+
+// Off-limits for hazards: out of bounds, the spawn area, the altar dais.
+function hazardFree(ix, iy) {
   if (ix < 0 || iy < 0 ||
-      ix >= CONFIG.worldWidth / TILE || iy >= CONFIG.worldHeight / TILE) return false;
-  // Keep the spawn area and the altar dais safe.
+      ix >= CONFIG.worldWidth / TILE || iy >= CONFIG.worldHeight / TILE) return true;
   const cx = Math.floor(CONFIG.worldWidth / 2 / TILE);
   const cy = Math.floor(CONFIG.worldHeight / 2 / TILE);
-  if (Math.abs(ix - cx) <= 2 && Math.abs(iy - cy) <= 2) return false;
+  if (Math.abs(ix - cx) <= 2 && Math.abs(iy - cy) <= 2) return true;
   const ax = Math.floor(CONFIG.altar.x / TILE);
   const ay = Math.floor(CONFIG.altar.y / TILE);
-  if (Math.abs(ix - ax) <= 1 && Math.abs(iy - ay) <= 1) return false;
+  return Math.abs(ix - ax) <= 1 && Math.abs(iy - ay) <= 1;
+}
+
+export function isTrapTile(ix, iy) {
+  if (hazardFree(ix, iy)) return false;
   const h = ((ix * 73856093) ^ (iy * 19349663)) >>> 0;
   return h % 71 === 0; // ~1.4% of tiles
+}
+
+// Stage 2 only — callers gate on world.stage. Same hash, different
+// modulus; spikes win the rare tile that rolls both.
+export function isPoisonTile(ix, iy) {
+  if (hazardFree(ix, iy) || isTrapTile(ix, iy)) return false;
+  const h = ((ix * 73856093) ^ (iy * 19349663)) >>> 0;
+  return h % 29 === 11; // ~3.4% of tiles
+}
+
+// Stage 3 only — quicksand patches that slow the player (player.js).
+export function isQuicksandTile(ix, iy) {
+  if (hazardFree(ix, iy)) return false;
+  const h = ((ix * 73856093) ^ (iy * 19349663)) >>> 0;
+  return h % 19 === 7; // ~5.3% of tiles
 }
 
 // Playable characters: pixel-sprite sheets + palettes. player.js renders
@@ -405,7 +519,7 @@ export const SHOP = [
   { id: 'g_rate',   name: 'Talisman Focus', desc: '+0.2 shots/sec per level',      base: 150, max: 5, apply: (s, lv) => { s.fireRate += 0.2 * lv; } },
   { id: 'g_proj',   name: 'Spirit Winds',   desc: '+12.5% projectile speed per level', base: 120, max: 3, apply: (s, lv) => { s.projectileSpeed += 60 * lv; } },
   { id: 'g_pierce', name: 'Ghost Shots',    desc: 'Shots pierce +1 foe per level', base: 500, max: 2, apply: (s, lv) => { s.pierce = (s.pierce || 0) + lv; } },
-  { id: 'huntress', name: 'Huntress',   desc: 'Unlock the Huntress character', base: 250, max: 1, apply: () => {} },
+  { id: 'huntress', name: 'Huntress',   desc: 'Unlock the Huntress — +30 speed, -20 max health, shots pierce from the start', base: 250, max: 1, apply: () => {} },
 ];
 export const shopCost = (item, owned) => item.base * (owned + 1);
 
@@ -435,15 +549,27 @@ export const Bank = {
 // player takes the stair through the Gate of Descent.
 export const Progress = {
   stage2: store?.getItem('ws_stage2') === '1',
+  // Stage 3: opened by walking the desert gate inside the jungle vault.
+  stage3: store?.getItem('ws_stage3') === '1',
   // Crimson Boomerang: once claimed at the altar, every later run starts with it.
   boomerang: store?.getItem('ws_boomerang') === '1',
+  // Dash: claimed from the jungle vault chest after Stage 2; permanent.
+  dash: store?.getItem('ws_dash') === '1',
   unlockStage2() {
     this.stage2 = true;
     store?.setItem('ws_stage2', '1');
   },
+  unlockStage3() {
+    this.stage3 = true;
+    store?.setItem('ws_stage3', '1');
+  },
   unlockBoomerang() {
     this.boomerang = true;
     store?.setItem('ws_boomerang', '1');
+  },
+  unlockDash() {
+    this.dash = true;
+    store?.setItem('ws_dash', '1');
   },
 };
 
@@ -454,8 +580,10 @@ export function wipeProgress() {
   Bank.gold = 0;
   Bank.levels = {};
   Progress.stage2 = false;
+  Progress.stage3 = false;
   Progress.boomerang = false;
-  for (const k of ['ws_gold', 'ws_shop', 'ws_stage2', 'ws_boomerang']) store?.removeItem(k);
+  Progress.dash = false;
+  for (const k of ['ws_gold', 'ws_shop', 'ws_stage2', 'ws_stage3', 'ws_boomerang', 'ws_dash']) store?.removeItem(k);
   Settings.setCharacter('hunter'); // the Huntress is locked again
 }
 
@@ -470,5 +598,10 @@ export const Settings = {
     if (id === 'huntress' && !Bank.levelOf('huntress')) return; // shop unlock
     this.character = id;
     store?.setItem('ws_character', id);
+  },
+  volume: (() => { const v = parseFloat(store?.getItem('ws_volume')); return Number.isFinite(v) ? v : 1; })(), // 0..1 master volume
+  setVolume(v) {
+    this.volume = v;
+    store?.setItem('ws_volume', String(v));
   },
 };

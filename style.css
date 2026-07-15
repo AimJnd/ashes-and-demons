@@ -589,6 +589,10 @@ html, body {
 .reroll-btn:hover:not(:disabled) { background: rgba(255, 209, 102, 0.2); }
 .reroll-btn:disabled { opacity: 0.35; cursor: default; }
 
+/* Master volume slider (Settings + pause menu): slide to 0 = mute */
+.volume-row { display: flex; align-items: center; gap: 0.6rem; font-size: 0.9rem; }
+.volume-slider { width: 200px; accent-color: var(--accent); cursor: pointer; }
+
 /* Availability / stacking footnote (Abilities compendium) */
 .card .note {
   margin-top: 0.5rem;

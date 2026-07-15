@@ -16,6 +16,25 @@ function ac() {
   return ctx;
 }
 
+// Master volume: every sound (SFX and the music bus) routes through this
+// one gain node, so a single slider mutes/scales the lot.
+let volume = 1;
+let master = null;
+function masterBus() {
+  const c = ac();
+  if (!c) return null;
+  if (!master) {
+    master = c.createGain();
+    master.gain.value = volume;
+    master.connect(c.destination);
+  }
+  return master;
+}
+export function setVolume(v) {
+  volume = v;
+  if (master) master.gain.value = v;
+}
+
 // One enveloped oscillator: pitch glides f0 -> f1 over dur, gain decays to 0.
 // dest routes the note somewhere other than the speakers (the music bus).
 function tone(type, f0, f1, dur, vol, delay = 0, dest = null) {
@@ -29,7 +48,7 @@ function tone(type, f0, f1, dur, vol, delay = 0, dest = null) {
   o.frequency.exponentialRampToValueAtTime(Math.max(1, f1), t + dur);
   g.gain.setValueAtTime(vol, t);
   g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-  o.connect(g).connect(dest || c.destination);
+  o.connect(g).connect(dest || masterBus());
   o.start(t);
   o.stop(t + dur + 0.02);
 }
@@ -50,7 +69,7 @@ function noise(dur, vol, freq = 800, delay = 0) {
   f.frequency.value = freq;
   const g = c.createGain();
   g.gain.value = vol;
-  src.connect(f).connect(g).connect(c.destination);
+  src.connect(f).connect(g).connect(masterBus());
   src.start(t);
 }
 
@@ -74,6 +93,15 @@ const BARS = {
     bass: [[82.41, 0], [123.47, 8]],
     bassVoice: ['sine', 3.2, 0.02],
   },
+  // Stage 3 — the desert kingdom: a winding double-harmonic (hijaz) line
+  // over a low drone, like heat shimmer off the dunes.
+  3: {
+    step: 0.5,
+    melody: [220, 233.08, 277.18, 220, 293.66, 277.18, 233.08, 220, 174.61, 0, 220, 233.08, 220, 0, 164.81, 0],
+    melodyVoice: ['triangle', 0.55, 0.035],
+    bass: [[110, 0], [116.54, 8]],
+    bassVoice: ['sawtooth', 3, 0.012],
+  },
 };
 
 export const Music = {
@@ -86,7 +114,7 @@ export const Music = {
     if (!c) return null;
     if (!this._bus) {
       this._bus = c.createGain();
-      this._bus.connect(c.destination);
+      this._bus.connect(masterBus());
     }
     return this._bus;
   },

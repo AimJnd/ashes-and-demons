@@ -126,6 +126,7 @@
       <button id="btn-new-game" class="menu-btn primary">New Game</button>
       <button id="btn-stage-1" class="menu-btn">Stage 1</button>
       <button id="btn-stage-2" class="menu-btn">Stage 2</button>
+      <button id="btn-stage-3" class="menu-btn">Stage 3</button>
       <button id="btn-stage-back" class="menu-btn">Back</button>
     </div>
 
@@ -170,6 +171,8 @@
       <p id="settings-movement-label">Movement controls</p>
       <button id="btn-controls-kb" class="menu-btn">Keyboard (WASD / Arrows)</button>
       <button id="btn-controls-mouse" class="menu-btn">Mouse (follow cursor)</button>
+      <p>Volume</p>
+      <input id="settings-volume" class="volume-slider" type="range" min="0" max="100" aria-label="Volume" />
       <button id="btn-settings-back" class="menu-btn">Back</button>
     </div>
 
@@ -198,6 +201,9 @@
       <div id="pause-abilities"></div>
       <button id="btn-resume" class="menu-btn primary">Resume</button>
       <button id="btn-pause-controls" class="menu-btn">Movement: Keyboard</button>
+      <label class="volume-row">Volume
+        <input id="pause-volume" class="volume-slider" type="range" min="0" max="100" aria-label="Volume" />
+      </label>
       <button id="btn-pause-quit" class="menu-btn">Quit to Menu</button>
       <p class="pause-hint">Hover an ability for details · Esc to resume</p>
     </div>
