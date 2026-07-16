@@ -1088,6 +1088,7 @@ class Game {
     Input.mouseWorldY = Input.mouse.y * Camera.zoom + Camera.y;
     if (w.treasure) return this.updateTreasure(dt);
     w.time += dt;
+    if (w.stormT > 0) w.stormT -= dt; // wave-start sandstorm blows over
     w.player.update(dt, Input, w);
 
     // Altar relic: materializes at the unlock wave; step onto the dais
@@ -1182,6 +1183,9 @@ class Game {
     // Pickups lie flat on the floor — always drawn under standing actors.
     for (const k of this.world.pickups) k.render(ctx, Camera);
 
+    // Blood puddles lie flat on the floor too.
+    for (const h of this.world.hazards) if (h.puddle) h.render(ctx, Camera);
+
     // The Gate of Descent (post-boss exit) stands on the floor plane.
     // Stage 3's gate is set into the revealed pyramid dungeon.
     if (this.world.gate) {
@@ -1214,8 +1218,8 @@ class Game {
     // Projectiles render on top of everyone.
     for (const p of this.world.projectiles) p.render(ctx, Camera);
 
-    // Hostile fireballs blaze above the crowd.
-    for (const h of this.world.hazards) h.render(ctx, Camera);
+    // Hostile fireballs blaze above the crowd (puddles drew on the floor).
+    for (const h of this.world.hazards) if (!h.puddle) h.render(ctx, Camera);
 
     // Damage numbers sit above everything in the world.
     for (const f of this.world.floaters) f.render(ctx, Camera);
@@ -1226,11 +1230,12 @@ class Game {
     // sight. Same-color alpha ramp with a doubled inner stop, dodging the
     // transparent-stop gradient bug noted below. Rebuilt every frame —
     // it tracks the player.
-    if (this.world.stage === 2 || this.world.sandstorm) {
+    const storm = this.world.sandstorm || this.world.stormT > 0;
+    if (this.world.stage === 2 || storm) {
       const F = CONFIG.fog;
-      const mul = this.world.sandstorm ? CONFIG.boss3.stormSightMul : 1;
+      const mul = storm ? CONFIG.boss3.stormSightMul : 1;
       const R = F.radius * mul, E = F.edge * mul;
-      const rgb = this.world.sandstorm ? '148, 118, 66' : '7, 13, 6';
+      const rgb = storm ? '148, 118, 66' : '7, 13, 6';
       const p = Camera.toScreen(this.world.player.x, this.world.player.y);
       const g = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, R + E);
       g.addColorStop(0, `rgba(${rgb}, 0)`);

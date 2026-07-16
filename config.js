@@ -141,6 +141,8 @@ export const CONFIG = {
     baseSpawnRate: 1.5, // enemies/sec at wave 1
     spawnRateGrowth: 0.15,
     stage2SpawnMul: 1.2, // Stage 2 spawns a bit faster — the player arrives stronger
+    stage3SpawnMul: 1.3, // Stage 3 a touch denser still
+    waveStorm: 5,        // Stage 3: seconds of sandstorm blown in at each wave start
     hpScaling: 0.12,    // per-wave multiplier add-ons
     damageScaling: 0.05,    //contact damage
     speedScaling: 0.04,
@@ -275,12 +277,13 @@ export const ENEMIES = {
   // Demonic scarab: winds up and charges in a straight burst when far,
   // scuttles in for contact bites when close.
   scarab: { hp: 45, speed: 95, damage: 12, radius: 15, xp: 3, gold: 2, color: '#b3541e', behavior: 'charge',
-            chargeRange: 320, chargeSpeed: 620, chargeTime: 0.55, chargeCooldown: 2.2, windup: 0.4 },
+            chargeRange: 320, chargeSpeed: 620, chargeTime: 0.55, chargeCooldown: 2.2, windup: 0.4,
+            puddle: { life: 5, damage: 3, radius: 16 } }, // death leaves a blood puddle
   // Mummy: hulking bandaged colossus. Huge hp pool; rewraps to full if
   // left undamaged for healDelay. Fires a telegraphed bandage line that
   // reels the player in. The spawner marches in 4+wave of them per wave
   // (5 at wave 1, 6 at wave 2, ...) on their own clock.
-  mummy: { hp: 420, speed: 38, damage: 24, radius: 30, xp: 12, gold: 8, color: '#cfc3a0', behavior: 'mummy',
+  mummy: { hp: 210, speed: 50, damage: 24, radius: 30, xp: 12, gold: 8, color: '#cfc3a0', behavior: 'mummy',
            healDelay: 5,
            pull: { range: 520, windup: 0.9, speed: 900, damage: 10, cooldown: 4.5, pullSpeed: 1500 } },
   // The tower archer once its perch collapses — a ground skirmisher.
@@ -292,12 +295,12 @@ export const ENEMIES = {
   tower:   { hp: 260, speed: 0, damage: 0, radius: 30, xp: 8, gold: 6, color: '#c8a86b', behavior: 'static',
              structure: true, range: 460, cooldown: 2.2, spitSpeed: 340, shotDamage: 14 },
   obelisk: { hp: 120, speed: 0, damage: 0, radius: 18, xp: 4, gold: 3, color: '#b59a68', behavior: 'static',
-             structure: true },
+             structure: true, heal: 15 }, // toppling one restores flat hp
 };
 
 // Upgrade pool. id is stable; effect mutates the player's stat block.
 // Optional fields (see Progression.rollChoices):
-//   tier:     'rare' | 'epic' — styles the level-up card; commons have none
+//   tier:     'rare' | 'epic' | 'legendary' — styles the level-up card; commons have none
 //   weight:   relative roll chance (default 1; rare ~0.25, epic ~0.1)
 //   requires: fn(player) — option only offered when this returns true
 //   note:     shown in the Abilities compendium (availability / stack info)
@@ -342,7 +345,7 @@ export const UPGRADES = [
   // Vampiric Rites — lifesteal on ALL damage dealt (any weapon, nova too).
   // Desert-blooded: only enters the pool from Stage 3 on (p.stage is
   // stamped on the player by game.js newWorld).
-  { id: 'lifesteal', name: 'Vampiric Rites', tier: 'rare', weight: 0.25,
+  { id: 'lifesteal', name: 'Vampiric Rites', tier: 'legendary', weight: 0.04,
     desc: 'Heal 2% of all damage you deal (stacks up to 6%)',
     note: 'Stage 3+ · stacks ×3',
     requires: (p) => p.stage >= 3 && (p.stats.lifesteal || 0) < 0.06,
@@ -503,6 +506,47 @@ export const CHARACTERS = {
       '.KCCCCCCC...',
     ],
   },
+  // The Paladin: white-and-gold bulwark. Slow and soft-hitting, but twice
+  // the Hunter's health and Holy Nova burns from the first step. Shop
+  // unlock (500g) that only appears once Stage 2's serpent has fallen.
+  paladin: {
+    name: 'Paladin',
+    stats: { speed: 180, damage: 7, maxHealth: 200, novaLevel: 1 },
+    pal: {
+      H: '#f0e9d8', // hair (white)
+      S: '#e9ddd2', // skin
+      E: '#ffd166', // eyes / amulet gem (gold)
+      M: '#b8b09a', // face mask (pale)
+      C: '#e6e0cf', // coat (white)
+      L: '#c7bfa8', // sleeve shade
+      B: '#e0a92e', // belt (gold)
+      K: '#cfc7b2', // cape
+      P: '#d8d2c0', // pants
+      O: '#8f8468', // boots
+    },
+    glow: { fill: '#fff2c4', shadow: '#ffcf4d' },
+    aura: 'rgba(255, 213, 110, 0.8)',
+    auraBody: '#3a3322',
+    // Staff repaint: white theme with a gold crescent + orb (player.js).
+    wand: { shaft: '#7a6430', edge: 'rgba(255, 224, 130, 0.6)', grip: '#4a3c1c',
+            head: '#ffd166', glow: '#ffb830', orb: '#fff3c9' },
+    torso: [
+      '....HHHH....',
+      '..HHHHHHHH..',
+      '..HHHHHHHH..',
+      '.H.HHHHHH...',
+      '...HSSSSH...',
+      '...SESSES...',
+      '...MMMMMM...',
+      '....MMMM....',
+      '.K.CCECCC...',
+      '.KKCCCCCCC..',
+      'KKLCCCCCCL..',
+      'KKLCCBBCCL..',
+      '.KKCCCCCC...',
+      '.KCCCCCCC...',
+    ],
+  },
 };
 
 // Player-facing settings (persisted). ui.js writes, player.js reads.
@@ -513,15 +557,20 @@ const store = typeof localStorage !== 'undefined' ? localStorage : null;
 // stat block at run start (player.js). Cost climbs with each level owned:
 // cost of the NEXT level = base * (owned + 1).
 export const SHOP = [
-  { id: 'g_dmg',    name: 'Whetstone',      desc: '+2 damage per level',           base: 150, max: 5, apply: (s, lv) => { s.damage += 2 * lv; } },
-  { id: 'g_hp',     name: 'Iron Constitution', desc: '+10 max health per level',   base: 150, max: 5, apply: (s, lv) => { s.maxHealth += 10 * lv; } },
+  // stage3Extra: bonus levels that open up once Stage 2 is beaten
+  // (Progress.stage3). when: hides the item entirely until it returns true.
+  { id: 'g_dmg',    name: 'Whetstone',      desc: '+2 damage per level',           base: 150, max: 5, stage3Extra: 3, apply: (s, lv) => { s.damage += 2 * lv; } },
+  { id: 'g_hp',     name: 'Iron Constitution', desc: '+10 max health per level',   base: 150, max: 5, stage3Extra: 3, apply: (s, lv) => { s.maxHealth += 10 * lv; } },
   { id: 'g_speed',  name: 'Swift Boots',    desc: '+10 move speed per level',      base: 120,  max: 5, apply: (s, lv) => { s.speed += 10 * lv; } },
   { id: 'g_rate',   name: 'Talisman Focus', desc: '+0.2 shots/sec per level',      base: 150, max: 5, apply: (s, lv) => { s.fireRate += 0.2 * lv; } },
   { id: 'g_proj',   name: 'Spirit Winds',   desc: '+12.5% projectile speed per level', base: 120, max: 3, apply: (s, lv) => { s.projectileSpeed += 60 * lv; } },
   { id: 'g_pierce', name: 'Ghost Shots',    desc: 'Shots pierce +1 foe per level', base: 500, max: 2, apply: (s, lv) => { s.pierce = (s.pierce || 0) + lv; } },
   { id: 'huntress', name: 'Huntress',   desc: 'Unlock the Huntress — +30 speed, -20 max health, shots pierce from the start', base: 250, max: 1, apply: () => {} },
+  { id: 'paladin',  name: 'Paladin',    desc: 'Unlock the Paladin — double health and Holy Nova from the start, but slow and soft-hitting', base: 500, max: 1, apply: () => {},
+    when: () => Progress.stage3 },
 ];
 export const shopCost = (item, owned) => item.base * (owned + 1);
+export const shopMax = (item) => item.max + (Progress.stage3 ? item.stage3Extra || 0 : 0);
 
 // Persistent meta-progression: gold balance + shop purchase levels.
 export const Bank = {
@@ -536,7 +585,7 @@ export const Bank = {
   buy(item) {
     const owned = this.levelOf(item.id);
     const cost = shopCost(item, owned);
-    if (owned >= item.max || this.gold < cost) return false;
+    if (owned >= shopMax(item) || this.gold < cost) return false;
     this.gold -= cost;
     this.levels[item.id] = owned + 1;
     store?.setItem('ws_gold', String(this.gold));
@@ -595,7 +644,8 @@ export const Settings = {
   },
   character: store?.getItem('ws_character') || 'hunter', // key into CHARACTERS
   setCharacter(id) {
-    if (id === 'huntress' && !Bank.levelOf('huntress')) return; // shop unlock
+    // Shop-unlocked characters (huntress, paladin) stay refused until bought.
+    if (SHOP.some((i) => i.id === id) && !Bank.levelOf(id)) return;
     this.character = id;
     store?.setItem('ws_character', id);
   },

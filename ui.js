@@ -4,7 +4,7 @@
   logic — it reflects state and reports user choices back via callbacks.
 */
 
-import { CONFIG, UPGRADES, Settings, CHARACTERS, CHAR_LEGS, SHOP, Bank, shopCost, Progress, wipeProgress } from './config.js';
+import { CONFIG, UPGRADES, Settings, CHARACTERS, CHAR_LEGS, SHOP, Bank, shopCost, shopMax, Progress, wipeProgress } from './config.js';
 import { icon } from './icons.js';
 import { setVolume } from './audio.js';
 
@@ -413,21 +413,30 @@ export const Menu = {
     };
     paintChar('char-canvas-hunter', CHARACTERS.hunter);
     paintChar('char-canvas-huntress', CHARACTERS.huntress);
+    paintChar('char-canvas-paladin', CHARACTERS.paladin);
+    // Shop-unlocked characters: locked until bought (setCharacter refuses
+    // them anyway). id must match the SHOP item id.
+    const lockedChars = [
+      ['huntress', 'Fast · frail · piercing shots'],
+      ['paladin',  'Tanky · slow · Holy Nova'],
+    ];
     const markChar = () => {
       document.getElementById('btn-char-hunter')?.classList.toggle('primary', Settings.character === 'hunter');
-      const hb = document.getElementById('btn-char-huntress');
-      hb?.classList.toggle('primary', Settings.character === 'huntress');
-      // Shop unlock: locked until bought (setCharacter refuses it anyway).
-      const owned = Bank.levelOf('huntress') > 0;
-      hb?.classList.toggle('locked', !owned);
-      const desc = hb?.querySelector('.char-desc');
-      if (desc) desc.textContent = owned
-        ? 'Fast · frail · piercing shots'
-        : 'Fast · frail · piercing shots · 🔒 250 gold in the Shop';
+      for (const [id, blurb] of lockedChars) {
+        const b = document.getElementById(`btn-char-${id}`);
+        b?.classList.toggle('primary', Settings.character === id);
+        const owned = Bank.levelOf(id) > 0;
+        b?.classList.toggle('locked', !owned);
+        const desc = b?.querySelector('.char-desc');
+        if (desc) desc.textContent = owned
+          ? blurb
+          : `${blurb} · 🔒 ${SHOP.find((i) => i.id === id).base} gold in the Shop`;
+      }
     };
     this._markChar = markChar; // renderShop re-runs it after a purchase
     wire('btn-char-hunter',   () => { Settings.setCharacter('hunter');   markChar(); });
     wire('btn-char-huntress', () => { Settings.setCharacter('huntress'); markChar(); });
+    wire('btn-char-paladin',  () => { Settings.setCharacter('paladin');  markChar(); });
     markChar();
 
     // Pause-menu controls toggle: one button that flips the scheme.
@@ -486,20 +495,22 @@ export const Menu = {
     box.innerHTML = '';
 
     for (const item of SHOP) {
+      if (item.when && !item.when()) continue; // hidden until unlocked
       const owned = Bank.levelOf(item.id);
-      const maxed = owned >= item.max;
+      const max = shopMax(item); // stage3Extra levels open after Stage 2
+      const maxed = owned >= max;
       const cost = shopCost(item, owned);
 
       const row = document.createElement('div');
       row.className = 'shop-item';
-      const lvl = item.max > 1
-        ? `<span class="shop-lvl">Lv ${owned}/${item.max}</span>`
+      const lvl = max > 1
+        ? `<span class="shop-lvl">Lv ${owned}/${max}</span>`
         : (owned ? '<span class="shop-lvl">Owned</span>' : '');
       row.innerHTML = `<div class="shop-info"><h3>${item.name} ${lvl}</h3><p>${item.desc}</p></div>`;
 
       const btn = document.createElement('button');
       btn.className = 'menu-btn shop-buy';
-      btn.textContent = maxed ? (item.max > 1 ? 'Max' : 'Owned') : `${cost} gold`;
+      btn.textContent = maxed ? (max > 1 ? 'Max' : 'Owned') : `${cost} gold`;
       btn.disabled = maxed || Bank.gold < cost;
       btn.addEventListener('click', () => {
         if (Bank.buy(item)) {
@@ -524,6 +535,7 @@ export const Menu = {
       ['Common', (u) => !u.tier],
       ['Rare',   (u) => u.tier === 'rare'],
       ['Epic',   (u) => u.tier === 'epic'],
+      ['Legendary', (u) => u.tier === 'legendary'],
     ];
     for (const [label, match] of groups) {
       const ups = UPGRADES.filter(match);

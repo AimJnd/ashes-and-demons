@@ -693,7 +693,7 @@ export class Enemy extends Entity {
     const r = this.radius;
     const dir = this.flip ? -1 : 1;
     const sway = Math.sin(t * 1.6) * r * 0.05;
-    const h = r * 2.6, w = r * 1.5;
+    const h = r * 2.6, w = r * 1.2;
     const top = s.y - h;
 
     // Telegraph: the bandage lane, drawn under the body.
@@ -1191,7 +1191,7 @@ export class Spit extends Entity {
 // reads `pull` on hit and reels the player in (systems.js).
 export class Bandage extends Entity {
   constructor(mummy, ang, cfg) {
-    super(mummy.x, mummy.y - mummy.radius, 8);
+    super(mummy.x, mummy.y - mummy.radius, 11);
     this.mummy = mummy;
     this.vx = Math.cos(ang) * cfg.speed;
     this.vy = Math.sin(ang) * cfg.speed;
@@ -1234,6 +1234,38 @@ export class Bandage extends Entity {
     ctx.moveTo(s.x - 5, s.y + 3);
     ctx.lineTo(s.x + 5, s.y - 1);
     ctx.stroke();
+    ctx.restore();
+  }
+}
+
+// Blood puddle: scarab guts left on the floor. Rides the hazards list,
+// but Combat reads `puddle`: it survives contact (no burst) and its bite
+// is gated by the player's i-frames. game.js draws it on the floor plane.
+export class BloodPuddle extends Entity {
+  constructor(x, y, cfg) {
+    super(x, y, cfg.radius);
+    this.puddle = true;
+    this.damage = cfg.damage;
+    this.life = cfg.life;
+  }
+
+  update(dt) {
+    this.life -= dt;
+    if (this.life <= 0) this.alive = false;
+  }
+
+  render(ctx, camera) {
+    const s = camera.toScreen(this.x, this.y);
+    ctx.save();
+    ctx.globalAlpha = Math.min(1, this.life) * 0.8; // fade out the last second
+    ctx.fillStyle = '#6e0f14';
+    ctx.beginPath();
+    ctx.ellipse(s.x, s.y, this.radius * 1.25, this.radius * 0.7, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#9c1a1a';
+    ctx.beginPath();
+    ctx.ellipse(s.x - 2, s.y - 2, this.radius * 0.75, this.radius * 0.4, 0, 0, Math.PI * 2);
+    ctx.fill();
     ctx.restore();
   }
 }

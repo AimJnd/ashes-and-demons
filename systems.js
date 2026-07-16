@@ -5,7 +5,7 @@
 */
 
 import { CONFIG, ENEMIES, UPGRADES, Bank, Progress } from './config.js';
-import { Enemy, Projectile, Pickup, FloatingText, Burst } from './entities.js';
+import { Enemy, Projectile, Pickup, FloatingText, Burst, BloodPuddle } from './entities.js';
 import { Dragon, Serpent, MummyKing } from './boss.js';
 
 // Spawner / difficulty director -------------------------------------
@@ -61,6 +61,9 @@ export class Spawner {
         this._mummyWave = this.wave;
         this._mummyQuota = 4 + this.wave;
         this._mummyT = 0;
+        // Each wave blows in on a brief sandstorm (game.js ticks it down;
+        // the fog + weapon sight read it alongside the boss's storm).
+        world.stormT = CONFIG.waves.waveStorm;
       }
       this._mummyT -= dt;
       if (this._mummyQuota > 0 && this._mummyT <= 0) {
@@ -72,7 +75,8 @@ export class Spawner {
 
     // Spawn rate grows each wave; accumulate fractional spawns.
     let rate = CONFIG.waves.baseSpawnRate + (this.wave - 1) * CONFIG.waves.spawnRateGrowth;
-    if (world.stage >= 2) rate *= CONFIG.waves.stage2SpawnMul;
+    if (world.stage >= 3) rate *= CONFIG.waves.stage3SpawnMul;
+    else if (world.stage >= 2) rate *= CONFIG.waves.stage2SpawnMul;
     this._spawnAccumulator += dt * rate;
     while (this._spawnAccumulator >= 1) {
       this._spawnAccumulator -= 1;
@@ -310,6 +314,16 @@ export const Combat = {
       world.floaters.push(new Burst(e.x, e.y, e.def?.color || '#c0392b'));
       // A collapsing tower drops its archer into the fight.
       if (e.hasShooter) world.enemies.push(new Enemy(e.x, e.y, 'shooter'));
+      // Toppled obelisk releases its stored vitality.
+      if (e.def?.heal) {
+        player.health = Math.min(player.stats.maxHealth, player.health + e.def.heal);
+        world.floaters.push(new FloatingText(
+          player.x, player.y - player.radius * 1.6, `+${e.def.heal}`,
+          { color: '#7dff9a' }
+        ));
+      }
+      // Scarab guts: a blood puddle that lingers and bites on contact.
+      if (e.def?.puddle) world.hazards.push(new BloodPuddle(e.x, e.y, e.def.puddle));
       world.pickups.push(new Pickup(e.x, e.y, 'xp', e.xp));
       // Random health drop — Lucky Charm adds to the base chance. Offset
       // slightly so it isn't hidden under the gem.
@@ -430,7 +444,7 @@ export const Combat = {
     for (const h of world.hazards) {
       if (!h.alive) continue;
       if (hits(h, player)) {
-        h.alive = false; // fireball bursts on impact either way
+        if (!h.puddle) h.alive = false; // fireball bursts on impact; puddles linger
         if (player._hurtCd <= 0 && player.takeDamage(h.damage)) {
           player._hurtCd = 0.5;
           world.floaters.push(

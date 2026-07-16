@@ -23,7 +23,7 @@ import { Sfx } from './audio.js';
 // sandstorm at half that sight. Everywhere else sees forever.
 function sightRange(world) {
   const base = CONFIG.fog.radius + CONFIG.fog.edge / 2;
-  if (world.sandstorm) return base * CONFIG.boss3.stormSightMul;
+  if (world.sandstorm || world.stormT > 0) return base * CONFIG.boss3.stormSightMul;
   return world.stage === 2 ? base : Infinity;
 }
 

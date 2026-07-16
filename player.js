@@ -91,7 +91,7 @@ export class Player extends Entity {
       this.facing = this._dashAng;
       this.x += Math.cos(this._dashAng) * dcfg.speed * dt;
       this.y += Math.sin(this._dashAng) * dcfg.speed * dt;
-    } else if (dx !== 0 || dy !== 0) {
+    } else if ((dx !== 0 || dy !== 0) && !(this._rootT > 0)) {
       // Normalize so diagonals aren't faster than cardinals.
       const len = Math.hypot(dx, dy);
       dx /= len; dy /= len;
@@ -114,6 +114,9 @@ export class Player extends Entity {
       const pdx = m.x - this.x, pdy = m.y - this.y;
       const pd = Math.hypot(pdx, pdy);
       if (!m.alive || pd < m.radius + this.radius + 12) {
+        // Reeled all the way in: rooted for a beat at the mummy's feet
+        // (walking is dead; the dash branch above still punches out).
+        if (m.alive) this._rootT = 1;
         this._pull = null;
       } else {
         this.x += (pdx / pd) * this._pull.speed * dt;
@@ -128,6 +131,7 @@ export class Player extends Entity {
 
     // Tick down the post-hit invulnerability window.
     if (this._hurtCd > 0) this._hurtCd -= dt;
+    if (this._rootT > 0) this._rootT -= dt;
     if (this.glowT > 0) this.glowT -= dt;
 
     // Spike traps: linger past the grace period and they bite, then keep
@@ -321,6 +325,12 @@ export class Player extends Entity {
     // Void wand — ranged mode only; the Spirit Blade swap goes bare-handed
     // (its presence on screen is the slash VFX itself).
     if (this.weapon.id === 'ranged') {
+      // Staff palette: void-blue by default; characters may repaint it
+      // (the Paladin's white-and-gold, see CHARACTERS.paladin.wand).
+      const W = this.look.wand || {
+        shaft: '#232a3d', edge: 'rgba(130, 185, 255, 0.5)', grip: '#141b2b',
+        head: '#9fd8ff', glow: '#3fc8ff', orb: '#d9f4ff',
+      };
       const hx = s.x + dir * p * 4.2;       // hand at the sleeve edge
       const hy = y0 + p * 11;               // belt-row height
       const tx = hx + dir * r * 0.75;       // crescent head, up-forward
@@ -328,25 +338,25 @@ export class Player extends Entity {
       const bx = hx - dir * r * 0.28;       // shaft butt, down-behind
       const by = hy + r * 0.42;
       ctx.lineCap = 'round';
-      ctx.strokeStyle = '#232a3d';          // dark shaft…
+      ctx.strokeStyle = W.shaft;            // dark shaft…
       ctx.lineWidth = 3;
       ctx.beginPath(); ctx.moveTo(bx, by); ctx.lineTo(tx, ty); ctx.stroke();
-      ctx.strokeStyle = 'rgba(130, 185, 255, 0.5)'; // …with a blue edge light
+      ctx.strokeStyle = W.edge;             // …with an accent edge light
       ctx.lineWidth = 1;
       ctx.beginPath(); ctx.moveTo(bx, by); ctx.lineTo(tx, ty); ctx.stroke();
-      ctx.fillStyle = '#141b2b';
+      ctx.fillStyle = W.grip;
       ctx.beginPath(); ctx.arc(hx, hy, r * 0.16, 0, Math.PI * 2); ctx.fill();
-      // Crescent head cradling a smoldering void orb (the Voidcaller motif).
+      // Crescent head cradling a smoldering orb (the Voidcaller motif).
       ctx.save();
-      ctx.strokeStyle = '#9fd8ff';
-      ctx.shadowColor = '#3fc8ff';
+      ctx.strokeStyle = W.head;
+      ctx.shadowColor = W.glow;
       ctx.shadowBlur = 9;
       ctx.lineWidth = 2;
       const aim = Math.atan2(ty - by, tx - bx); // crescent opens along the shaft
       ctx.beginPath();
       ctx.arc(tx, ty, r * 0.26, aim + 0.7, aim - 0.7);
       ctx.stroke();
-      ctx.fillStyle = '#d9f4ff';
+      ctx.fillStyle = W.orb;
       ctx.shadowBlur = 12 + Math.sin(t * 5) * 4;
       ctx.beginPath(); ctx.arc(tx, ty, r * 0.1, 0, Math.PI * 2); ctx.fill();
       ctx.restore();

@@ -481,19 +481,21 @@ html, body {
   width: 52px;
   height: 52px;
   margin: 0.1rem auto 0.45rem;
-  color: var(--accent);
-  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.6));
+  color: #5b9dff; /* commons: ice-blue */
+  filter: drop-shadow(0 0 6px rgba(91, 157, 255, 0.45));
 }
 .card-icon svg { width: 100%; height: 100%; display: block; }
 .card.rare .card-icon { color: #ffd166; filter: drop-shadow(0 0 8px rgba(255, 209, 102, 0.45)); }
 .card.epic .card-icon { color: #d16bff; filter: drop-shadow(0 0 8px rgba(209, 107, 255, 0.5)); }
+.card.legendary .card-icon { color: #ff4d5e; filter: drop-shadow(0 0 8px rgba(255, 77, 94, 0.55)); }
 
 /* Small inline icon inside pause-menu chips */
 .ability-chip { display: inline-flex; align-items: center; gap: 0.4rem; }
-.chip-icon { width: 16px; height: 16px; flex: none; color: var(--accent); }
+.chip-icon { width: 16px; height: 16px; flex: none; color: #5b9dff; }
 .chip-icon svg { width: 100%; height: 100%; display: block; }
 .ability-chip.rare .chip-icon { color: #ffd166; }
 .ability-chip.epic .chip-icon { color: #d16bff; }
+.ability-chip.legendary .chip-icon { color: #ff4d5e; }
 
 /* In-game sidebar: unlocked abilities down the right edge. The double-id
    selector outranks the generic `#hud > div` pill styling. */
@@ -516,7 +518,7 @@ html, body {
   width: 40px;
   height: 40px;
   padding: 6px;
-  color: var(--accent);
+  color: #5b9dff; /* commons: ice-blue */
   background: rgba(12, 9, 20, 0.65);
   border: 1.5px solid rgba(138, 43, 226, 0.5);
   border-radius: 9px;
@@ -526,6 +528,7 @@ html, body {
 .hud-ability svg { width: 100%; height: 100%; display: block; }
 .hud-ability.rare { border-color: rgba(255, 209, 102, 0.75); color: #ffd166; box-shadow: 0 0 8px rgba(255, 209, 102, 0.25); }
 .hud-ability.epic { border-color: rgba(209, 107, 255, 0.8); color: #d16bff; box-shadow: 0 0 8px rgba(209, 107, 255, 0.3); }
+.hud-ability.legendary { border-color: rgba(255, 77, 94, 0.8); color: #ff4d5e; box-shadow: 0 0 8px rgba(255, 77, 94, 0.3); }
 .hud-ability .stack {
   position: absolute;
   right: -5px;
@@ -536,12 +539,13 @@ html, body {
   font-weight: 800;
   text-align: center;
   color: #fff;
-  background: var(--accent);
+  background: #3d6fd0; /* commons: match the ice-blue icon */
   border-radius: 999px;
   border: 1px solid #0b0b10;
 }
 .hud-ability.rare .stack { background: #b8860b; }
 .hud-ability.epic .stack { background: #9333cc; }
+.hud-ability.legendary .stack { background: #b8232f; }
 
 /* Level-up cards ---------------------------------------------------- */
 #levelup-cards { display: flex; gap: 1rem; }
@@ -557,7 +561,7 @@ html, body {
   width: 200px;
   padding: 1.25rem;
   background: #16161f;
-  border: 2px solid var(--accent);
+  border: 2px solid #5b9dff; /* commons: ice-blue (tiers override) */
   border-radius: 10px;
   cursor: pointer;
   text-align: center;
@@ -567,7 +571,7 @@ html, body {
   background: #20203a;
   transform: translateY(-4px);
 }
-.card h3 { margin-bottom: 0.5rem; color: var(--accent); }
+.card h3 { margin-bottom: 0.5rem; color: #5b9dff; }
 .card p { font-size: 0.9rem; opacity: 0.85; }
 
 /* Reroll: swap this card's offer for gold */
@@ -646,6 +650,23 @@ html, body {
 @keyframes epic-pulse {
   0%, 100% { box-shadow: 0 0 16px rgba(209, 107, 255, 0.35); }
   50%      { box-shadow: 0 0 32px rgba(209, 107, 255, 0.7); }
+}
+
+/* Legendary (Vampiric Rites) — blood-red, fiercest glow */
+.card.legendary {
+  border-color: #ff4d5e;
+  background: linear-gradient(160deg, #26070c, #16161f 70%);
+  animation: legendary-pulse 0.9s ease-in-out infinite;
+}
+.card.legendary:hover {
+  background: linear-gradient(160deg, #380a12, #20203a 70%);
+  transform: translateY(-4px) scale(1.03);
+}
+.card.legendary h3 { color: #ff4d5e; }
+.card.legendary .tier-tag { background: #ff4d5e; }
+@keyframes legendary-pulse {
+  0%, 100% { box-shadow: 0 0 18px rgba(255, 77, 94, 0.4); }
+  50%      { box-shadow: 0 0 36px rgba(255, 77, 94, 0.8); }
 }
 
 /* Start-menu panels (Abilities / Leaderboard) ------------------------- */
@@ -800,6 +821,7 @@ html, body {
 }
 .ability-chip.rare { border-color: #ffd166; color: #ffd166; }
 .ability-chip.epic { border-color: #d16bff; color: #d16bff; }
+.ability-chip.legendary { border-color: #ff4d5e; color: #ff4d5e; }
 .pause-empty { opacity: 0.55; font-style: italic; }
 
 .pause-hint {
@@ -904,7 +926,7 @@ html, body {
   .ember, .ring-outer, .ring-inner, .demon-eye,
   .game-title, .title-block, .title-block::after,
   #ghost-shopkeeper svg,
-  .main-menu .menu-btn, .card.rare, .card.epic {
+  .main-menu .menu-btn, .card.rare, .card.epic, .card.legendary {
     animation: none !important;
   }
 }
